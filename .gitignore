@@ -1,0 +1,7 @@
+/data/*
+/out_*
+/corrected_data/merged*
+/.vscode
+/wandb/*
+/runs/*
+/further_pretrain/*
