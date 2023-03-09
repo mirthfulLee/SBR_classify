@@ -134,6 +134,7 @@ class ModelMemory(Model):
         if metadata and metadata[0]["type"] in ["test", "unlabel"]:
             shape = embedding_1.shape
             sample_embedding = embedding_1.view(shape[0], -1, shape[1])
+            # TODO: TypeError: object of type 'NoneType' has no len()
             sample_embedding = sample_embedding.expand(-1, len(self._golden_instances_labels), -1)
 
             golden_embedding = self._golden_instances_embeddings.expand(shape[0], -1, -1)

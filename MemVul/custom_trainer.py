@@ -23,14 +23,14 @@ from allennlp.common.checks import ConfigurationError, check_for_gpu
 from allennlp.data import DataLoader, TensorDict
 from allennlp.models.model import Model
 from allennlp.training import util as training_util
-from allennlp.training.callbacks import TrainerCallback, SanityChecksCallback, ConsoleLoggerCallback
+from allennlp.training.callbacks import TrainerCallback, ConfidenceChecksCallback, ConsoleLoggerCallback
 from allennlp.training.checkpointer import Checkpointer
 from allennlp.training.learning_rate_schedulers import LearningRateScheduler
 from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
-from allennlp.training.trainer import Trainer
+from allennlp.training.trainer import Trainer, TrainerCheckpoint
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class CustomGradientDescentTrainer(Trainer):
         self._callbacks = callbacks or []
         default_callbacks = list(DEFAULT_CALLBACKS) if enable_default_callbacks else []
         if run_sanity_checks:
-            default_callbacks.append(SanityChecksCallback)
+            default_callbacks.append(ConfidenceChecksCallback)
         for callback_cls in default_callbacks:
             for callback in self._callbacks:
                 if callback.__class__ == callback_cls:
@@ -446,8 +446,8 @@ class CustomGradientDescentTrainer(Trainer):
                 batch_loss,
                 batch_reg_loss,
                 batches_this_epoch,
-                world_size=self._world_size,
-                cuda_device=self.cuda_device,
+                # world_size=self._world_size,
+                # cuda_device=self.cuda_device,
             )
 
             if self._primary:
@@ -493,8 +493,8 @@ class CustomGradientDescentTrainer(Trainer):
             batch_reg_loss=None,
             num_batches=batches_this_epoch,
             reset=True,
-            world_size=self._world_size,
-            cuda_device=self.cuda_device,
+            # world_size=self._world_size,
+            # cuda_device=self.cuda_device,
         )
 
         for (worker, memory) in cpu_memory_usage:
@@ -582,8 +582,8 @@ class CustomGradientDescentTrainer(Trainer):
                 val_batch_loss,
                 val_batch_reg_loss,
                 batches_this_epoch,
-                world_size=self._world_size,
-                cuda_device=self.cuda_device,
+                # world_size=self._world_size,
+                # cuda_device=self.cuda_device,
             )
 
             description = training_util.description_from_metrics(val_metrics)
@@ -657,16 +657,20 @@ class CustomGradientDescentTrainer(Trainer):
         training_start_time = time.time()
 
         metrics["best_epoch"] = self._metric_tracker.best_epoch
+        best_model_state =os.path.join(self._serialization_dir, "best.th")
         for key, value in self._metric_tracker.best_epoch_metrics.items():
             metrics["best_validation_" + key] = value
 
         for epoch in range(epoch_counter, self._num_epochs):
+            self.cur_epoch = epoch
             epoch_start_time = time.time()
             train_metrics = self._train_epoch(epoch)
 
             # Back up the model now, in case something goes wrong later with the evaluation
-            if self._primary and self._checkpointer is not None:
-                self._checkpointer.shelve_model(epoch, self)
+            # TODO: shelve_model function is duplicated and moved, just disable following codes
+            # if self._primary and self._checkpointer is not None:
+            #     self._checkpointer.shelve_model(epoch, self)
+
             # Wait for the primary process to finish saving the model checkpoint
             if self._distributed:
                 dist.barrier()
@@ -701,8 +705,8 @@ class CustomGradientDescentTrainer(Trainer):
                         batch_reg_loss=None,
                         num_batches=num_batches,
                         reset=True,
-                        world_size=self._world_size,
-                        cuda_device=self.cuda_device,
+                        # world_size=self._world_size,
+                        # cuda_device=self.cuda_device,
                     )
 
                     # Check validation metric for early stopping
@@ -727,6 +731,8 @@ class CustomGradientDescentTrainer(Trainer):
                 metrics["best_epoch"] = epoch
                 for key, value in val_metrics.items():
                     metrics["best_validation_" + key] = value
+                # TODO: save best model state to best.th
+                torch.save(self.model.state_dict(), best_model_state)
 
                 self._metric_tracker.best_epoch_metrics = val_metrics
 
@@ -743,11 +749,13 @@ class CustomGradientDescentTrainer(Trainer):
             if self._momentum_scheduler:
                 self._momentum_scheduler.step(this_epoch_val_metric)
 
+            # TODO: save_checkpoint function has updated
             # The checkpointer saves state from the learning rate scheduler and the momentum
             # scheduler, so we have to make sure those are updated before we save the checkpoint here.
             if self._primary and self._checkpointer is not None:
                 self._checkpointer.save_checkpoint(
-                    epoch, self, is_best_so_far=self._metric_tracker.is_best_so_far()
+                    # epoch, self, is_best_so_far=self._metric_tracker.is_best_so_far()
+                    self
                 )
             # Wait for the primary process to finish saving the checkpoint
             if self._distributed:
@@ -775,17 +783,21 @@ class CustomGradientDescentTrainer(Trainer):
         else:
             epoch = self._num_epochs - 1
 
+        # TODO: checkpoint has removen the best_model_state function()
         # Load the best model state before returning
-        best_model_state = (
-            None if self._checkpointer is None else self._checkpointer.best_model_state()
-        )
-        if best_model_state:
-            self.model.load_state_dict(best_model_state)
+        # best_model_state = (
+        #     None if self._checkpointer is None else self._checkpointer.best_model_state()
+        # )
+        # if best_model_state:
+        if os.path.isfile(best_model_state):
+            self.model.load_state_dict(torch.load(best_model_state))
 
         return metrics, epoch
 
-    @contextmanager
-    def get_checkpoint_state(self) -> Iterator[Tuple[Dict[str, Any], Dict[str, Any]]]:
+    # what's the use of the comment
+    # @contextmanager
+    def get_checkpoint_state(self) -> TrainerCheckpoint:
+        # TODO: AttributeError: '_GeneratorContextManager' object has no attribute 'trainer_state'
         if self._moving_average is not None:
             # Assigning average value to model parameters.  The checkpointer will call
             # `restore_state_after_checkpointing` when it is done to put this back to what it was.
@@ -798,6 +810,8 @@ class CustomGradientDescentTrainer(Trainer):
             "metric_tracker": self._metric_tracker.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "batch_num_total": self._batch_num_total,
+            "epochs_completed": self.cur_epoch,
+            "batches_in_epoch_completed": self.cur_epoch * self.data_loader.batch_size
         }
 
         # If we have a learning rate or momentum scheduler, we should persist them too.
@@ -807,7 +821,8 @@ class CustomGradientDescentTrainer(Trainer):
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
         try:
-            yield model_state, training_states
+            # yield model_state, training_states
+            return TrainerCheckpoint(model_state, training_states)
         finally:
             if self._moving_average is not None:
                 self._moving_average.restore()
@@ -830,11 +845,14 @@ class CustomGradientDescentTrainer(Trainer):
         if self._checkpointer is None:
             return 0
 
-        model_state, training_state = self._checkpointer.restore_checkpoint()
-
-        if not training_state:
+        # FIXME: restore_checkpoint() not exist!
+        # model_state, training_state = self._checkpointer.restore_checkpoint()
+        _checkpoint = self._checkpointer.load_checkpoint()
+        if _checkpoint is None:
             # No checkpoint to restore, start at 0
             return 0
+        model_state = _checkpoint.model_state
+        training_state = _checkpoint.trainer_state
 
         self.model.load_state_dict(model_state)
         self.optimizer.load_state_dict(training_state["optimizer"])

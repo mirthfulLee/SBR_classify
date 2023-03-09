@@ -211,6 +211,21 @@ def get_pos_sample():
         json.dump(pos, f, indent=4)
 
 
+def get_pos_sample_from_json():
+    # extract all the positive samples and link them to the correspoding CWE
+    samples = json.load(open(DATA_PATH+"train_samples.json"))
+    pos = list(filter(lambda x: x["Security_Issue_Full"] == 1, samples))
+
+    CVE = json.load(open(DATA_PATH + "CVE_dict.json", "r"))
+    for sample in pos:
+        cve_id = sample["CVE_ID"]  # CVE_ID of all samples are valid
+        sample["CWE_ID"] = CVE[cve_id]["CWE_ID"]
+        sample["CVE_Description"] = CVE[cve_id]["CVE_Description"]
+
+    with open(DATA_PATH + "pos_info.json", "w") as f:
+        json.dump(pos, f, indent=4)
+        
+
 def pos_distribution():
     count_missing_CWE = 0
     POS = json.load(open(DATA_PATH + "pos_info.json", "r"))
@@ -234,6 +249,7 @@ def pos_distribution():
                         "Weakness Abstraction"
                     ]
                 else:
+                    # some CWEs are not included in VIEW-1000 (Research View)
                     count_missing_CWE += 1
                     print(cwe_id)
 
@@ -339,7 +355,7 @@ def build_anchor(level=1, num_cve_per_anchor=5):
     abstr_level = {"Pillar": 1, "Class": 2, "Base": 2.5, "Variant": 3, "Compound": 3}
 
     CWE_distribution_train = json.load(
-        open(DATA_PATH + "CWE_distribution_train.json", "r")
+        open(DATA_PATH + "CWE_distribution.json", "r")
     )  # only use the train set
     CWE_tree = json.load(open(DATA_PATH + "CWE_tree.json", "r"))  # dict
     CVE_dict = json.load(open(DATA_PATH + "CVE_dict.json", "r"))  # dict
@@ -668,10 +684,11 @@ if __name__ == "__main__":
     # divide_dataset_project_csv("all_samples_processed")
     # csv_to_json("train_project")
     # get_pos_sample()
+    # get_pos_sample_from_json()
     # pos_distribution()
-    # build_anchor()
+    build_anchor()
     # preliminary_study_keyword_match()
     # delta_days_IR_CVE()
     # culmulative_distribution_CWE()
     # IR_with_attack_steps()
-    generate_dataset_mlm("validation_samples")
+    # generate_dataset_mlm("validation_samples")

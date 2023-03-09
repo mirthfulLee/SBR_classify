@@ -5,3 +5,6 @@
 /wandb/*
 /runs/*
 /further_pretrain/*
+**/__pycache__
+/temp*
+**/out_*

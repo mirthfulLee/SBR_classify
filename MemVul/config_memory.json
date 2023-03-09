@@ -1,5 +1,5 @@
 local bert_model = "bert-base-uncased";
-local anchor_path = "CWE_anchor_golden_project.json";
+local anchor_path = "data/CWE_anchor_golden_project.json";
 local seed = 2023;
 
 {
@@ -10,7 +10,10 @@ local seed = 2023;
     "type": "reader_memory",
     "sample_neg": 0.01,
     "train_iter": 1,
-    "same_diff_ratio": {"diff":16, "same":16},
+    "same_diff_ratio": {
+      "diff": 16,
+      "same": 16
+    },
     "anchor_path": anchor_path,
     "tokenizer": {
       "type": "pretrained_transformer",
@@ -26,13 +29,15 @@ local seed = 2023;
       }
     }
   },
-  "train_data_path": "train_project.json",
-  "validation_data_path": "validation_project.json",
+  "train_data_path": "data/train_samples.json",
+  // "train_data_path": "data/sub_train_samples.json",
+  "validation_data_path": "data/validation_samples.json",
+  // "validation_data_path": "data/sub_validation_samples.json",
   "model": {
     "type": "model_memory",
     "label_namespace": "labels",
     "dropout": 0.1,
-    "device": "cuda:1",
+    // "device": "cuda:2",
     "use_header": true,
     "PTM": bert_model,
     "temperature": 0.1,
@@ -49,29 +54,50 @@ local seed = 2023;
   },
   "data_loader": {
     "batch_size": 32,
-    "shuffle": false
+    "shuffle": false,
+    // "num_workers": 10
   },
-  "validation_data_loader":{
+  "validation_data_loader": {
     "batch_size": 512,
-    "shuffle": false
+    "shuffle": false,
+    // "num_workers": 10
   },
   "trainer": {
     "type": "custom_gradient_descent",
     "optimizer": {
       "type": "huggingface_adamw",
-      "parameter_groups": [[["_text_field_embedder"], {"lr": 2e-5, "requires_grad": true}], [["_bert_pooler"], {"lr": 5e-5, "requires_grad": true}]],
+      "parameter_groups": [
+        [
+          [
+            "_text_field_embedder"
+          ],
+          {
+            "lr": 2e-5,
+            "requires_grad": true
+          }
+        ],
+        [
+          [
+            "_bert_pooler"
+          ],
+          {
+            "lr": 5e-5,
+            "requires_grad": true
+          }
+        ]
+      ],
       "lr": 1e-4,
       "betas": [
         0.9,
         0.999
       ]
     },
-    "checkpointer": {
-      "num_serialized_models_to_keep": 0,
-    },
+    // "checkpointer": {
+    //   "num_serialized_models_to_keep": 0,
+    // },
     "learning_rate_scheduler": {
-     "type": "linear_with_warmup",
-     "warmup_steps": 10000
+      "type": "linear_with_warmup",
+      "warmup_steps": 10000
     },
     "custom_callbacks": [
       {
@@ -80,7 +106,7 @@ local seed = 2023;
       {
         "type": "custom_validation",
         "anchor_path": anchor_path,
-        "data_reader":{
+        "data_reader": {
           "type": "reader_memory",
           "tokenizer": {
             "type": "pretrained_transformer",
@@ -102,6 +128,13 @@ local seed = 2023;
     "validation_metric": "+s_f1-score",
     "num_epochs": 15,
     "patience": 10,
-    "cuda_device": 0
-  }
+    // TODO: this is the real place to change target gpu
+    "cuda_device": 3
+  },
+  // "distributed": {
+  //   "cuda_devices": [
+  //     2,
+  //     3
+  //   ],
+  // }
 }
