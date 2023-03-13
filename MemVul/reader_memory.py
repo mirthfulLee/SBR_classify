@@ -75,6 +75,7 @@ class ReaderMemory(DatasetReader):
         # get the CWE ID from the correspoding CVE record
         self._cve_info = json.load(open("data/CVE_dict.json", "r"))  # dict
         # get the anchors
+        # TODO: simply with read_dataset()
         self._anchor = json.load(
             open(anchor_path, "r")
         )  # used for constructing pairs during training
@@ -114,6 +115,7 @@ class ReaderMemory(DatasetReader):
             if label == "pos":
                 # pos sample
                 cve_id = s["CVE_ID"]
+                # TODO: preprocess matched CVE_Description
                 if type(self._cve_info[cve_id]["CVE_Description"]) == str:
                     # need to perform special token replacement for CVE
                     self._cve_info[cve_id]["CVE_Description"] = replace_tokens_simple(
@@ -202,6 +204,7 @@ class ReaderMemory(DatasetReader):
                 "diff"
             ]  # number of mismatched pairs (NCIR)
 
+            # get data for all iters at the beginning
             for _ in range(iter_num):
                 for sample in all_data:
                     key = sample[self._target]
@@ -236,10 +239,8 @@ class ReaderMemory(DatasetReader):
     @overrides
     def text_to_instance(self, p, type_="train") -> Instance:
         fields: Dict[str, Field] = dict()
-        (
-            ins1,
-            ins2,
-        ) = p  # instance:Dict{id, intention, messages} mess:Dict{id, text, time, index, user}
+        ins1, ins2 = p
+        # instance:Dict{id, intention, messages} mess:Dict{id, text, time, index, user}
 
         fields["sample1"] = TextField(ins1["description"], self._token_indexers)
         ins1_class = ins1[self._target]

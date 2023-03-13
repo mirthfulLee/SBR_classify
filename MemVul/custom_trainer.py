@@ -795,7 +795,7 @@ class CustomGradientDescentTrainer(Trainer):
         return metrics, epoch
 
     # what's the use of the comment
-    # @contextmanager
+    @contextmanager
     def get_checkpoint_state(self) -> TrainerCheckpoint:
         # TODO: AttributeError: '_GeneratorContextManager' object has no attribute 'trainer_state'
         if self._moving_average is not None:
@@ -821,6 +821,7 @@ class CustomGradientDescentTrainer(Trainer):
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
         try:
+            # TODO: change back to yield
             # yield model_state, training_states
             return TrainerCheckpoint(model_state, training_states)
         finally:
