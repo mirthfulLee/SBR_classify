@@ -185,8 +185,8 @@ class ModelMemory(Model):
             output_dict['predict'].append(deepcopy(vote_num))
         
         for i, meta in enumerate(output_dict["meta"]):
-            out2file.append({"Issue_Url": meta["instance"][0]["Issue_Url"],
-                             "label": meta["instance"][0]["label"],
+            out2file.append({"label": meta["instance"][0]["label"],
+                            #  "Issue_Url": meta["instance"][0]["Issue_Url"],
                              "predict": output_dict["predict"][i]})
         
         return out2file

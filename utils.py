@@ -78,20 +78,11 @@ def preprocess_dataset_csv(f):
 
     # * remove CIR created after the official disclosure of corresponding CVE
     df["Issue_Created_At"] = df["Issue_Created_At"].map(fix_time)
-    print(
-        len(
-            df[
-                (df.Security_Issue_Full == 1)
-                & (df.Issue_Created_At > df.Published_Date)
-            ]
-        )
-    )  # 53
+    print(len(df[(df.Security_Issue_Full == 1) & (df.Issue_Created_At > df.Published_Date)]))  # 53
     df = df[(df.Security_Issue_Full == 0) | (df.Issue_Created_At < df.Published_Date)]
 
     # * remove projects without CIRs (since we remove some CIRs in the last step)
-    df["valid"] = df.groupby("project")["Security_Issue_Full"].transform(
-        "sum"
-    )  # 0-invalid >=1-valid
+    df["valid"] = df.groupby("project")["Security_Issue_Full"].transform("sum")  # 0-invalid >=1-valid
     print(len(df[df.valid == 0]))  # 26421
 
     df = df[df.valid != 0]

@@ -29,6 +29,7 @@ class ResetLoader(TrainerCallback):
 class CustomValidation(TrainerCallback):
     def __init__(self,
                  anchor_path: str,
+                 cve_path: str = "CVE_dict.json",
                  data_reader: DatasetReader = None,
                  data_loader: DataLoader = None,
                  serialization_dir: str = None) -> None:

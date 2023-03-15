@@ -1,6 +1,7 @@
 from dataclasses import field, fields
 from enum import Flag
 import json
+import pandas as pd
 from json import encoder
 import random
 import re
@@ -51,6 +52,7 @@ class ReaderMemory(DatasetReader):
         same_diff_ratio: Dict[str, int] = None,
         target: str = "Security_Issue_Full",
         anchor_path: str = "CWE_anchor_golden_project.json",
+        cve_path: str = "CVE_dict.json",
         sample_neg: float = None,
         train_iter: int = None,
         token_indexers: Dict[str, TokenIndexer] = None,
@@ -71,18 +73,18 @@ class ReaderMemory(DatasetReader):
             # when used in the callbacks for custom validation (loading golden anchors)
             return
 
-        # FIXME: change the data_path
         # get the CWE ID from the correspoding CVE record
-        self._cve_info = json.load(open("data/CVE_dict.json", "r"))  # dict
+        # TODO: drop unused columns?
+        # self._cve_info = json.load(open("data/CVE_dict.json", "r"))  # dict
+        self._cve_info = pd.read_csv(cve_path, header=0).groupby("CWE_ID")  # dict
         # get the anchors
-        # TODO: simply with read_dataset()
         self._anchor = json.load(
             open(anchor_path, "r")
         )  # used for constructing pairs during training
         for k, v in self._anchor.items():
             self._anchor[k] = self._tokenizer.tokenize(v)
 
-        self._dataset = dict()
+        # self._dataset = dict()
 
     def read_dataset(self, file_path):
         if "golden" in file_path:
@@ -90,76 +92,37 @@ class ReaderMemory(DatasetReader):
             dataset = dict()
             anchors = json.load(open(file_path, "r", encoding="utf-8"))  # dict
             for cwe_id, description in anchors.items():
-                dataset[cwe_id] = [
-                    {
-                        self._target: cwe_id,
-                        "description": self._tokenizer.tokenize(description),
-                    }
-                ]
+                dataset[cwe_id] = {
+                    "CWE_ID": cwe_id,
+                    "description": self._tokenizer.tokenize(description),
+                }
             return dataset
 
-        if self._dataset.get(file_path):
-            return self._dataset[file_path]
-
-        samples = json.load(open(file_path, "r", encoding="utf-8"))
-
-        dataset = {"neg": list()}  # for pos data, we use the CWE ID for key
-        for s in samples:
-            s["description"] = self._tokenizer.tokenize(
-                f"{s['Issue_Title']}. {s['Issue_Body']}"
-            )
-
-            # "1" for pos and "0" for neg
-            label = "pos" if str(s[self._target]) == "1" else "neg"
-            s[self._target] = label
-            if label == "pos":
-                # pos sample
-                cve_id = s["CVE_ID"]
-                # TODO: preprocess matched CVE_Description
-                if type(self._cve_info[cve_id]["CVE_Description"]) == str:
-                    # need to perform special token replacement for CVE
-                    self._cve_info[cve_id]["CVE_Description"] = replace_tokens_simple(
-                        self._cve_info[cve_id]["CVE_Description"]
-                    )
-                    self._cve_info[cve_id][
-                        "CVE_Description"
-                    ] = self._tokenizer.tokenize(
-                        self._cve_info[cve_id]["CVE_Description"]
-                    )
-
-                s["CWE_ID"] = self._cve_info[cve_id]["CWE_ID"]
-                label = s["CWE_ID"]
-                if label is None:
-                    # 2 dirty data
-                    continue
-                if label not in dataset:
-                    dataset[label] = list()
-
-            dataset[label].append(s)
-
-        self._dataset[file_path] = dataset  # update
+        # FIXME: necessary to store the file data? (only consider MemVul)
+        # No, this read_dataset() function only run once
+        # if self._dataset.get(file_path):
+        #     return self._dataset[file_path]
+        samples = pd.read_csv(file_path, header=0)
+        samples.fillna("", inplace=True)
+        samples["description"] = samples.apply(lambda x: self._tokenizer.tokenize(x["Issue_Title"]+". "+x["Issue_Body"]), axis=1)
+        samples["CVE_Description"] = samples.apply(lambda x: self._tokenizer.tokenize(x["CVE_Description"]), axis=1)
+        dataset = {
+            "pos": samples.loc[samples["CWE_ID"]!=""],
+            "neg": samples.loc[samples["CWE_ID"]==""]
+        }
+        # dataset["pos"]["_target"] = "pos"
+        # dataset["neg"]["_target"] = "neg"
 
         return dataset
 
     @overrides
     def _read(self, file_path) -> Iterable[Instance]:
+        # dataset key: CWE-ID or neg, value: samples combined with CVE_Description
         dataset = self.read_dataset(file_path)
-        all_data = list()
-        min_sample_num = 9999
-        for ll in list(dataset.values()):
-            if len(ll) < min_sample_num:
-                min_sample_num = len(ll)
-            all_data.extend(ll)
-
-        classes_districution = {"pos": 0, "neg": None}
-        pos_classes = list()
-        for k, v in dataset.items():
-            if k != "neg":
-                classes_districution["pos"] += len(v)
-                pos_classes.append(k)
-            else:
-                classes_districution["neg"] = len(v)
-        logger.info(classes_districution)
+        if "golden_" not in file_path:
+            classes_districution = {"pos": dataset["pos"].shape[0], "neg": dataset["neg"].shape[0]}
+            sample_num = classes_districution["pos"] + classes_districution["neg"]
+            logger.info(classes_districution)
 
         same_num = 0
         diff_num = 0
@@ -168,71 +131,63 @@ class ReaderMemory(DatasetReader):
             # path may accidentally contain the keywords, hence adding the userline
             # provide golden instances
             logger.info("Begin loading golden instances------")
-            for sample in all_data:
+            for sample in dataset.values():
                 yield self.text_to_instance((sample, sample), type_="golden")
-            logger.info(f"Num of golden instances is {len(all_data)}")
+            logger.info(f"Num of golden instances is {len(dataset)}")
 
         elif "test_" in file_path:
             # provide test data
             logger.info("Begin predict------")
 
-            for sample in reversed(all_data):
+            for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
                 yield self.text_to_instance((sample, sample), type_="unlabel")
-            logger.info(f"Predict sample num is {len(all_data)}")
+            for _, sample in dataset["neg"].iterrows():
+                yield self.text_to_instance((sample, sample), type_="unlabel")
+            logger.info(f"Predict sample num is {sample_num}")
 
         elif "validation_" in file_path:
             # provide valdiation data
             logger.info("Begin testing------")
-            num_test_sample = 0
-            for sample in reversed(all_data):
-                num_test_sample += 1
-                yield self.text_to_instance((sample, sample), type_="test")
-            logger.info(f"Test sample num is {num_test_sample}")
+            for _, sample in dataset["pos"].iterrows():
+                # positives come first and then the negatives
+                yield self.text_to_instance((sample, sample), type_="unlabel")
+            for _, sample in dataset["neg"].iterrows():
+                yield self.text_to_instance((sample, sample), type_="unlabel")
+            logger.info(f"Test sample num is {sample_num}")
 
         else:
             # must shuffle for train
-            random.shuffle(all_data)
-
-            iter_num = self._train_iter
+            shuffle_index = list(range(sample_num))
+            random.shuffle(shuffle_index)
             anchor_classes = list(self._anchor.keys())
+            cwe_index_dict = dataset["pos"].groupby("CWE_ID").groups
 
-            same_per_sample = self._same_diff_ratio[
-                "same"
-            ]  # number of matched pairs (CIR)
-            diff_per_sample = self._same_diff_ratio[
-                "diff"
-            ]  # number of mismatched pairs (NCIR)
+            same_per_sample = self._same_diff_ratio["same"]  # number of matched pairs (CIR)
+            diff_per_sample = self._same_diff_ratio["diff"]  # number of mismatched pairs (NCIR)
 
-            # get data for all iters at the beginning
-            for _ in range(iter_num):
-                for sample in all_data:
-                    key = sample[self._target]
-                    if key == "pos":
-
+            for index in shuffle_index:
+                if index < classes_districution["pos"]:
+                    # pos sample
+                    sample = dataset["pos"].iloc[index, :]
+                    yield self.text_to_instance((sample, sample), type_="train")  # always use the corresponding CVE to make pairs
+                    for same in random.choices(cwe_index_dict[sample["CWE_ID"]], k=same_per_sample - 1):
                         yield self.text_to_instance(
-                            (sample, sample), type_="train"
-                        )  # always use the corresponding CVE to make pairs
-                        for same in random.choices(
-                            dataset[sample["CWE_ID"]], k=same_per_sample - 1
-                        ):
-                            yield self.text_to_instance(
-                                (sample, same), type_="train"
-                            )  # CVE pair
+                            (sample, dataset["pos"].loc[same, :]), type_="train"
+                        )  # CVE pair
 
-                        same_num += same_per_sample  # matched pairs
+                    same_num += same_per_sample  # matched pairs
+                # determine whether make neg sample or not p = select_neg (0.1)
+                elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
+                    sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
+                    for diff in random.choices(anchor_classes, k=diff_per_sample):
+                        # random sample k anchors from the external memory
+                        yield self.text_to_instance(
+                            (sample, {"CWE_ID": diff, self._target: "pos"}),
+                            type_="train",
+                        )
 
-                    elif random.choices(
-                        self._choice_neg, weights=self._select_neg, k=1
-                    )[0]:
-                        for diff in random.choices(anchor_classes, k=diff_per_sample):
-                            # random sample k anchors from the external memory
-                            yield self.text_to_instance(
-                                (sample, {"CWE_ID": diff, self._target: "pos"}),
-                                type_="train",
-                            )
-
-                        diff_num += diff_per_sample
+                    diff_num += diff_per_sample
 
             logger.info(f"Dataset Count: Same : {same_num} / Diff : {diff_num}")
 
@@ -243,8 +198,10 @@ class ReaderMemory(DatasetReader):
         # instance:Dict{id, intention, messages} mess:Dict{id, text, time, index, user}
 
         fields["sample1"] = TextField(ins1["description"], self._token_indexers)
-        ins1_class = ins1[self._target]
-        ins2_class = ins2[self._target]
+        # ins1_class = ins1[self._target]
+        # ins2_class = ins2[self._target]
+        ins1_class = "neg" if ins1["CWE_ID"] == "" else "pos"
+        ins2_class = "neg" if ins2["CWE_ID"] == "" else "pos"
 
         if type_ == "train":
             # always true
@@ -254,16 +211,16 @@ class ReaderMemory(DatasetReader):
                     fields["sample2"] = TextField(
                         self._anchor[ins2["CWE_ID"]], self._token_indexers
                     )
-                elif ins1["Issue_Url"] == ins2["Issue_Url"]:
+                elif ins1["Issue_Title"] == ins2["Issue_Title"]:
                     # use description of the corresponding CVE
                     fields["sample2"] = TextField(
-                        self._cve_info[ins2["CVE_ID"]]["CVE_Description"],
+                        ins2["CVE_Description"],
                         self._token_indexers,
                     )
                 elif random.choices([True, False], [0.7, 0.3], k=1)[0]:
                     # use description of the other CVE that belong to the same category
                     fields["sample2"] = TextField(
-                        self._cve_info[ins2["CVE_ID"]]["CVE_Description"],
+                        ins2["CVE_Description"],
                         self._token_indexers,
                     )
                 elif random.choices([True, False], [0.5, 0.5], k=1)[0]:
@@ -284,23 +241,23 @@ class ReaderMemory(DatasetReader):
                     )
 
         if type_ in ["train"]:
-            if ins1[self._target] == ins2[self._target]:
+            if ins1_class == ins2_class:
                 fields["label"] = LabelField("same")
             else:
                 fields["label"] = LabelField("diff")
         elif type_ in ["test", "unlabel"]:
             # pos == same (we only use CIR to make matched pairs)
             # neg == diff (we only use NCIR to make mismatched pairs)
-            if ins1[self._target] == "pos":
+            if ins1_class == "pos":
                 fields["label"] = LabelField("same")
             else:
                 fields["label"] = LabelField("diff")
 
-        meta_ins1 = {"label": ins1[self._target]}
+        meta_ins1 = {"label": ins1_class}
         if type_ in ["train", "test", "unlabel"]:
-            if ins1[self._target] == "pos":
+            if ins1_class == "pos":
                 meta_ins1["label"] = ins1["CWE_ID"]
-            meta_ins1["Issue_Url"] = ins1["Issue_Url"]
+            # meta_ins1["Issue_Url"] = ins1["Issue_Url"]
 
         fields["metadata"] = MetadataField(
             {"type": type_, "instance": [meta_ins1]}

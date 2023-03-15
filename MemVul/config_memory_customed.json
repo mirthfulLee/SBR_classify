@@ -1,5 +1,6 @@
 local bert_model = "bert-base-uncased";
 local anchor_path = "data/CWE_anchor_golden_project.json";
+local cve_path = "data/CVE_text.csv";
 local seed = 2023;
 
 {
@@ -15,6 +16,7 @@ local seed = 2023;
       "same": 16
     },
     "anchor_path": anchor_path,
+    "cve_path": cve_path,
     "tokenizer": {
       "type": "pretrained_transformer",
       "model_name": bert_model,
@@ -29,10 +31,10 @@ local seed = 2023;
       }
     }
   },
-  "train_data_path": "data/train_samples.json",
-  // "train_data_path": "data/sub_train_samples.json",
-  "validation_data_path": "data/validation_samples.json",
-  // "validation_data_path": "data/sub_validation_samples.json",
+  // "train_data_path": "data/train_samples_compressed.csv",
+  "train_data_path": "data/sub_train_samples_compressed.csv",
+  // "validation_data_path": "data/validation_samples_compressed.csv",
+  "validation_data_path": "data/sub_validation_samples_compressed.csv",
   "model": {
     "type": "model_memory",
     "label_namespace": "labels",
@@ -92,9 +94,9 @@ local seed = 2023;
         0.999
       ]
     },
-    // "checkpointer": {
-    //   "num_serialized_models_to_keep": 0,
-    // },
+    "checkpointer": {
+      "keep_most_recent_by_count": 1,
+    },
     "learning_rate_scheduler": {
       "type": "linear_with_warmup",
       "warmup_steps": 10000
@@ -106,6 +108,7 @@ local seed = 2023;
       {
         "type": "custom_validation",
         "anchor_path": anchor_path,
+        "cve_path": cve_path,
         "data_reader": {
           "type": "reader_memory",
           "tokenizer": {
@@ -126,8 +129,8 @@ local seed = 2023;
     ],
     "num_gradient_accumulation_steps": 2,
     "validation_metric": "+s_f1-score",
-    "num_epochs": 20,
-    "patience": 7,
+    "num_epochs": 5,
+    "patience": 3,
     // TODO: this is the real place to change target gpu
     "cuda_device": 3
   },
