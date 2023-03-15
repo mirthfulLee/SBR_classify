@@ -84,7 +84,7 @@ class ReaderMemory(DatasetReader):
         for k, v in self._anchor.items():
             self._anchor[k] = self._tokenizer.tokenize(v)
 
-        # self._dataset = dict()
+        self._dataset = dict()
 
     def read_dataset(self, file_path):
         if "golden" in file_path:
@@ -100,8 +100,8 @@ class ReaderMemory(DatasetReader):
 
         # FIXME: necessary to store the file data? (only consider MemVul)
         # No, this read_dataset() function only run once
-        # if self._dataset.get(file_path):
-        #     return self._dataset[file_path]
+        if self._dataset.get(file_path):
+            return self._dataset[file_path]
         samples = pd.read_csv(file_path, header=0)
         samples.fillna("", inplace=True)
         samples["description"] = samples.apply(lambda x: self._tokenizer.tokenize(x["Issue_Title"]+". "+x["Issue_Body"]), axis=1)
@@ -110,9 +110,7 @@ class ReaderMemory(DatasetReader):
             "pos": samples.loc[samples["CWE_ID"]!=""],
             "neg": samples.loc[samples["CWE_ID"]==""]
         }
-        # dataset["pos"]["_target"] = "pos"
-        # dataset["neg"]["_target"] = "neg"
-
+        self._dataset[file_path] = dataset
         return dataset
 
     @overrides
