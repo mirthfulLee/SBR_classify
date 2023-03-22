@@ -1,0 +1,97 @@
+local bert_model = "bert-base-uncased";
+local cwe_info_file = "data/CWE_info.json";
+local seed = 2023;
+
+{
+    "random_seed": seed,
+    "numpy_seed": seed,
+    "pytorch_seed": seed,
+    "dataset_reader": {
+        "type": "reader_memory",
+        "sample_neg": 0.01,
+        // "train_iter": 1,
+        "cwe_info_file": cwe_info_file,
+        "tokenizer": {
+            "type": "pretrained_transformer",
+            "model_name": bert_model,
+            "add_special_tokens": true,
+            "max_length": 512
+        },
+        "token_indexers": {
+            "tokens": {
+                "type": "pretrained_transformer",
+                "model_name": bert_model,
+                "namespace": "tags"
+            }
+        }
+    },
+    "train_data_path": "data/train_samples.json",
+    // "train_data_path": "data/sub_train_samples.json",
+    "validation_data_path": "data/validation_samples.json",
+    // "validation_data_path": "data/sub_validation_samples.json",
+    "model": {
+        "type": "model_tree",
+        "dropout": 0.1,
+        "PTM": bert_model,
+        "cwe_info_file": cwe_info_file,
+        "text_field_embedder": {
+            "token_embedders": {
+                "tokens": {
+                    "type": "pretrained_transformer",
+                    "model_name": bert_model,
+                    "train_parameters": true,
+                    "override_weights_file": "further_pretrain/out_wwm/pytorch_model.bin"
+                }
+            }
+        }
+    },
+    "data_loader": {
+        "batch_size": 32,
+        "shuffle": false,
+    },
+    "validation_data_loader": {
+        "batch_size": 512,
+        "shuffle": false,
+    },
+    "trainer": {
+        "type": "gradient_descent",
+        "optimizer": {
+            "type": "huggingface_adamw",
+            "parameter_groups": [
+                [
+                    [
+                        "_text_field_embedder"
+                    ],
+                    {
+                        "lr": 2e-5,
+                        "requires_grad": true
+                    }
+                ],
+            ],
+            "lr": 1e-4,
+            "betas": [
+                0.9,
+                0.999
+            ]
+        },
+        "checkpointer": {
+            "num_serialized_models_to_keep": 1,
+        },
+        "callbacks": [
+            {
+                "type": "embedding_update_callback",
+                "cwe_info_file": cwe_info_file
+            }
+        ]
+        "learning_rate_scheduler": {
+            "type": "linear_with_warmup",
+            "warmup_steps": 10000
+        },
+        "num_gradient_accumulation_steps": 2,
+        // "validation_metric": "+f1-score_l0", # maximize f1 score of root or use default "-loss"
+        "num_epochs": 20,
+        "patience": 7,
+        // TODO: this is the real place to change target gpu
+        "cuda_device": 3
+    },
+}

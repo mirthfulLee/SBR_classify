@@ -44,7 +44,6 @@ class ModelMemory(Model):
                  PTM: str = 'bert-base-uncased',
                  dropout: float = 0.1,
                  label_namespace: str = "labels",
-                 device: str = "cpu",
                  use_header: bool = True,
                  temperature: float = 1,
                  initializer: InitializerApplicator = InitializerApplicator(),
@@ -52,7 +51,6 @@ class ModelMemory(Model):
         
         super().__init__(vocab, regularizer) 
         
-        self.device = torch.device(device)
         self._use_header = use_header  # whether to use the projection header
 
         self._label_namespace = label_namespace

@@ -1,5 +1,5 @@
 local bert_model = "bert-base-uncased";
-local seed = 2021;
+local seed = 2023;
 
 {
   "random_seed": seed,
@@ -30,7 +30,6 @@ local seed = 2021;
     "type": "model_single",
     "label_namespace": "class_labels",
     "dropout": 0.1,
-    "device": "cuda:0",
     "PTM": bert_model,
     "text_field_embedder": {
       "token_embedders": {
@@ -47,14 +46,33 @@ local seed = 2021;
     "batch_size": 64,
     "shuffle": false
   },
-  "validation_data_loader":{
+  "validation_data_loader": {
     "batch_size": 512,
     "shuffle": false
   },
   "trainer": {
     "optimizer": {
       "type": "huggingface_adamw",
-      "parameter_groups": [[["_text_field_embedder"], {"lr": 2e-5, "requires_grad": true}], [["_bert_pooler"], {"lr": 5e-5, "requires_grad": true}]],
+      "parameter_groups": [
+        [
+          [
+            "_text_field_embedder"
+          ],
+          {
+            "lr": 2e-5,
+            "requires_grad": true
+          }
+        ],
+        [
+          [
+            "_bert_pooler"
+          ],
+          {
+            "lr": 5e-5,
+            "requires_grad": true
+          }
+        ]
+      ],
       "lr": 1e-4,
       "betas": [
         0.9,
