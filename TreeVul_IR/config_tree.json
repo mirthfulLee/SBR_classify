@@ -7,15 +7,13 @@ local seed = 2023;
     "numpy_seed": seed,
     "pytorch_seed": seed,
     "dataset_reader": {
-        "type": "reader_memory",
+        "type": "reader_tree",
         "sample_neg": 0.01,
-        // "train_iter": 1,
-        "cwe_info_file": cwe_info_file,
         "tokenizer": {
             "type": "pretrained_transformer",
             "model_name": bert_model,
             "add_special_tokens": true,
-            "max_length": 512
+            "max_length": 256
         },
         "token_indexers": {
             "tokens": {
@@ -48,10 +46,12 @@ local seed = 2023;
     "data_loader": {
         "batch_size": 32,
         "shuffle": false,
+        "max_instances_in_memory": 4096
     },
     "validation_data_loader": {
         "batch_size": 512,
         "shuffle": false,
+        "max_instances_in_memory": 4096
     },
     "trainer": {
         "type": "gradient_descent",
@@ -80,7 +80,6 @@ local seed = 2023;
         "callbacks": [
             {
                 "type": "embedding_update_callback",
-                "cwe_info_file": cwe_info_file
             }
         ]
         "learning_rate_scheduler": {

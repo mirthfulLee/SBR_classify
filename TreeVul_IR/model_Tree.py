@@ -19,13 +19,14 @@ from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, weig
 from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric
 from allennlp.training.util import get_batch_size
 from allennlp.data.tokenizers.pretrained_transformer_tokenizer import PretrainedTransformerTokenizer
+from allennlp.data.token_indexers.pretrained_transformer_indexer import PretrainedTransformerIndexer
 from allennlp.data.batch import Batch
 
 from torch import nn
 from torch.nn import Dropout, PairwiseDistance, CosineSimilarity
 import torch.nn.functional as F
 from torch.autograd import Variable
-
+from reader_Tree import EmbeddingReader
 
 import warnings
 import json
@@ -117,19 +118,22 @@ class ModelTree(Model):
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
 
+        reader = EmbeddingReader(tokenizer = PretrainedTransformerTokenizer(PTM, add_special_tokens=True, max_length=512),
+                                 token_indexers = {"tokens": PretrainedTransformerIndexer(PTM, namespace="tags")},
+                                 level_num=level_num, cwe_info_file=cwe_info_file)
+        self._level_node = reader._level_node
+        self._num_class = reader._num_class
+        self._cwe_description = reader._cwe_description
+        self._cwe_path = reader._cwe_path
+        self._label2idx = reader._label2idx
+        
+        self._instance4update = list()
+        for l in range(self._level_num):
+            self._instance4update.append(list(reader.read_(f"l{l}")))
+
         self._dropout = Dropout(dropout)
         self._level_num = level_num
         self._PTM = PTM
-        self._cwe_info = json.load(open(cwe_info_file, "r"))
-        # get CWE num of each level
-        self._num_class = {i : 0 for i in range(level_num)}
-        for cwe_id, cwe in self._cwe_info:
-            if cwe["Depth"] < level_num: self._num_class[cwe["Depth"]] += 1
-        self._num_class[0] = 2 # "neg" and "SBR"
-        for i in range(1, level_num): self._num_class[i] += 1 # add "neg"
-        for l in range(level_num): 
-            logger.info(f"level_{l} has {self._num_class[l]} classes")
-        
         self._text_field_embedder = text_field_embedder
         
         self._embedding_dim = self._text_field_embedder.get_output_dim()
@@ -160,54 +164,49 @@ class ModelTree(Model):
                 "accuracy": CategoricalAccuracy(),
                 "f1-score": FBetaMeasure(beta=1.0, average=None, labels=range(self._num_class[l])),  # return list[float]
             })
-        # TODO: init path fraction metric
-        self._path_fraction_metric = PathFractionMetric()
+        # init path fraction metric
+        self._path_fraction_metric = PathFractionMetric(level_num=level_num)
         self._loss = CustomCrossEntropyLoss()
-        self._cwe_instance = list(list() for _ in range(self._level_num))
+        self._cwe_instance = list(list(reader.read(f"l{l}")) for l in range(level_num))
         initializer(self)
-
-    def get_level_info(self, cwe_instances: List[Instance]):
-        for ins in cwe_instances:
-            if ins["meta"]["Depth"] < self._level_num:
-                if ins["meta"]["CWE_ID"] == "neg": 
-                    # make sure neg at 0-idx
-                    self._cwe_instance[ins["meta"]["Depth"]].insert(0, ins)
-                else: 
-                    self._cwe_instance[ins["meta"]["Depth"]].append(ins)
-        # sort to match with idx
-        for l in range(self._level_num):
-            list.sort(self._cwe_instance[level], key=lambda ins: self._token2idx(ins["meta"]["CWE_ID"]))
 
     def update_embeddings(self):
         # update embeddings before each epoch
-        for l in range(self._level_num - 1):
-            with torch.no_grad():
-                cuda_device = self._get_prediction_device()
-                dataset = Batch(self._cwe_instance[l])
-                dataset.index_instances(self.vocab)
-                model_input = util.move_to_device(dataset.as_tensor_dict(), cuda_device)
-                embedding = self._pooler(self._text_field_embedder(model_input["sample"]))
-                self._level_classifiers[l].update_upper_level_embeddings(embedding)
+        logger.info("updating golden embeddings")
+        with torch.no_grad():
+            for l in range(self._level_num - 1):
+                self.forward_on_instances(self._cwe_instance[l])
 
     def forward(self,
                 process,
                 sample: TextFieldTensors,
-                path: torch.IntTensor = None,
                 metadata: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         '''
         1. process(constant): FlagField - whether it’s training process or not
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
-        3. path(batch, level_num): ListField - index of class correspond to each layer
-        4. metadata()
+        3. metadata()
         '''
-
         output_dict = dict()
+        output_dict["process"] = process
         if metadata:
             output_dict["meta"] = metadata
-        level_prob = list()
-        level_label = [path[:, l] for l in range(self._level_num)]
+        # path = self._nsbr_path if ins["CWE_ID"] == "" else self._cwe_info[ins["CWE_ID"]]["Path"]
+        # level_label = [path[:, l] for l in range(self._level_num)]
         root_emb = self._pooler(self._text_field_embedder(sample))
+        if process == "update":
+            # update embedding for corresponding level classfier
+            l = metadata[0]["level"]
+            self._level_classifiers[l].update_upper_level_embeddings(root_emb)
+            return output_dict
+        level_prob = list()
         level_prob.append(self._root_classifier(root_emb))
+        # TODO: build level label from CWE_ID
+        level_label = list()
+        for l in range(self._level_num):
+            labels = list()
+            for ins in metadata:
+                labels.append(self._cwe_path[ins["CWE_ID"]][l])
+            level_label.append(torch.IntTensor(labels))
 
         # TODO: add unlabel process
         for l in range(self._level_num - 1):
@@ -229,7 +228,7 @@ class ModelTree(Model):
         for l in range(self._level_num - 1):
             for metric_name, metric in self._metrics.items():
                 metric(predictions=level_prob[l], gold_labels=level_label[l])
-        metric(predictions=level_prob[l], gold_labels=level_label[l])
+        self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
 
         return output_dict
     
@@ -239,10 +238,9 @@ class ModelTree(Model):
         for l in range(self._level_num):
             pred = np.argmax(output_dict["probs"][l], axis=1)
             for i, idx in enumerate(pred):
-                out2file.append({f"label_l{l}": self._idx2token[l][output_dict["label"][l][i]],
-                                 f"predict_l{l}": self._idx2token[l][idx],
+                out2file.append({f"label_l{l}": self._level_node[l][output_dict["label"][l][i]],
+                                 f"predict_l{l}": self._level_node[l][idx],
                                  f"prob_l{l}": output_dict["probs"][l][i][output_dict["label"][l][i]]})
-                             
         return out2file
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
