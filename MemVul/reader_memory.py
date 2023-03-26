@@ -262,12 +262,7 @@ class ReaderMemory(DatasetReader):
             else:
                 fields["label"] = LabelField("diff")
 
-        meta_ins1 = {"label": ins1_class}
-        if type_ in ["train", "test", "unlabel"]:
-            if ins1_class == "pos":
-                meta_ins1["label"] = ins1["CWE_ID"]
-            # meta_ins1["Issue_Url"] = ins1["Issue_Url"]
-
+        meta_ins1 = {"label": ins1["CWE_ID"] if ins1_class == "pos" else ins1_class}
         fields["metadata"] = MetadataField(
             {"type": type_, "instance": [meta_ins1]}
         )  # only to record information

@@ -107,7 +107,7 @@ def test_siamese(
     return metrics
 
 
-def model_measure(test_label, pred, pred_score, sample_id):
+def model_measure(test_label, pred, pred_score):
     # test_label is the ground truth
     # pred is the predicted label
     # pred_score is the predicted score
@@ -189,9 +189,9 @@ def cal_metrics(file, thres=0.5):
 
     pred_score = [_["prob"] for _ in merged_results]
 
-    id_ = [_["Issue_Url"] for _ in merged_results]
+    # id_ = [_["Issue_Url"] for _ in merged_results]
 
-    metrics, fpr, tpr = model_measure(label, pred, pred_score, id_)
+    metrics, fpr, tpr = model_measure(label, pred, pred_score)
     print(metrics)
 
     fn = file.split("_")[:-1]
@@ -202,23 +202,19 @@ def cal_metrics(file, thres=0.5):
         json.dump(metrics, f, indent=4)
 
 
-DATA_PATH = "/data1/huanli/pythonProjects/MemVul"
-
-if __name__ == "__main__":
-    test_set = os.path.join(DATA_PATH, "corrected_data", "merged_processed.json")
-    golden_set = "CWE_anchor_golden_project"  # path of anchors in the external memory
-    model = "local_memvul"
+def predict_test_set():
     config = json.load(open("test_config_memory.json", "r"))  # test config
     weights = None  # the default is the best one
     batch_size = 512
-    cuda = 0
-    config["model"]["device"] = f"cuda:{cuda}"
-    seed = 2021
+    # TODO: change the cuda device
+    cuda = 1
+    # config["model"]["device"] = f"cuda:{cuda}"
+    seed = 2023
     output_metric = f"{DATA_PATH}/test_results/{model}_metric.json"
     output_results = f"{DATA_PATH}/test_results/{model}_result.json"
-
     test_siamese(
-        archive_file=f"{DATA_PATH}/{model}/model.tar.gz",
+        # FIXME: change archive_file
+        archive_file=f"{DATA_PATH}/{model}/my_memvul/model.tar.gz",
         input_file=test_set,
         input_golden_file=f"{DATA_PATH}/data/{golden_set}.json",
         test_config=config,
@@ -229,3 +225,15 @@ if __name__ == "__main__":
         cuda_device=cuda,
         seed=seed,
     )
+
+DATA_PATH = "/data1/huanli/pythonProjects/SBR_identify"
+
+if __name__ == "__main__":
+    # test_set = os.path.join(DATA_PATH, "corrected_data", "merged_processed.json")
+    test_set = os.path.join(DATA_PATH, "data", "test_samples_compressed.csv")
+    golden_set = "CWE_anchor_golden_project"  # path of anchors in the external memory
+    model = "MemVul"
+
+    predict_test_set()
+    cal_metrics(f"{model}_result", thres=0.69)
+

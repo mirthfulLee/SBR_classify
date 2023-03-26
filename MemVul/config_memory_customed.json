@@ -39,7 +39,6 @@ local seed = 2023;
     "type": "model_memory",
     "label_namespace": "labels",
     "dropout": 0.1,
-    // "device": "cuda:2",
     "use_header": true,
     "PTM": bert_model,
     "temperature": 0.1,
@@ -57,12 +56,10 @@ local seed = 2023;
   "data_loader": {
     "batch_size": 32,
     "shuffle": false,
-    // "num_workers": 10
   },
   "validation_data_loader": {
     "batch_size": 512,
     "shuffle": false,
-    // "num_workers": 10
   },
   "trainer": {
     "type": "custom_gradient_descent",
@@ -130,14 +127,8 @@ local seed = 2023;
     "num_gradient_accumulation_steps": 2,
     "validation_metric": "+s_f1-score",
     "num_epochs": 20,
-    "patience": 8,
+    "patience": 7,
     // TODO: this is the real place to change target gpu
     "cuda_device": 3
   },
-  // "distributed": {
-  //   "cuda_devices": [
-  //     2,
-  //     3
-  //   ],
-  // }
 }

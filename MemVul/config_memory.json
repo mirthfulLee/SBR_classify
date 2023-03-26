@@ -129,12 +129,6 @@ local seed = 2023;
     "num_epochs": 20,
     "patience": 7,
     // TODO: this is the real place to change target gpu
-    "cuda_device": 3
+    "cuda_device": 2
   },
-  // "distributed": {
-  //   "cuda_devices": [
-  //     2,
-  //     3
-  //   ],
-  // }
 }
