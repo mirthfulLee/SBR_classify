@@ -56,10 +56,12 @@ local seed = 2023;
   "data_loader": {
     "batch_size": 32,
     "shuffle": false,
+    "max_instances_in_memory": 4096
   },
   "validation_data_loader": {
     "batch_size": 512,
     "shuffle": false,
+    "max_instances_in_memory": 4096
   },
   "trainer": {
     "type": "custom_gradient_descent",
