@@ -144,7 +144,7 @@ class EmbeddingReader(DatasetReader):
         cwe_info = json.load(open(cwe_info_file, "r"))
         self._level_num = level_num
         self._cwe_path = {"neg": ["neg" for _ in range(level_num)],
-                          "SBR": ["SBR", "neg" for _ in range(1, level_num)]}
+                          "SBR": ["SBR"]+["neg"]*(level_num-1)}
         self._cwe_description = {"neg": "",
                                  "SBR": "A security bug report that contains a vulnerability typically includes the following elements: Description of the vulnerability: The report should describe the vulnerability in detail, including how it was discovered, the affected component or feature, and the potential consequences of exploiting the vulnerability. Steps to reproduce: The report should include a detailed description of the steps required to reproduce the vulnerability, including any specific configuration or settings required. Impact assessment: The report should include an assessment of the potential impact of the vulnerability, including the severity of the potential consequences and the likelihood of exploitation. Recommendations: The report should include recommendations for addressing the vulnerability, such as applying a patch or upgrading to a newer version of the software. Contact information: The report should include contact information for the person submitting the report, in case the developer or administrator needs to follow up with additional questions or clarifications."}
         self._level_node = {i : ["neg"] for i in range(level_num)}

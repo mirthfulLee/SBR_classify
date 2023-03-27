@@ -26,7 +26,7 @@ from torch import nn
 from torch.nn import Dropout, PairwiseDistance, CosineSimilarity
 import torch.nn.functional as F
 from torch.autograd import Variable
-from reader_Tree import EmbeddingReader
+from TreeVul_IR.reader_Tree import EmbeddingReader
 
 import warnings
 import json

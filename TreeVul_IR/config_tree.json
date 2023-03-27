@@ -13,7 +13,7 @@ local seed = 2023;
             "type": "pretrained_transformer",
             "model_name": bert_model,
             "add_special_tokens": true,
-            "max_length": 256
+            "max_length": 512
         },
         "token_indexers": {
             "tokens": {
@@ -81,7 +81,7 @@ local seed = 2023;
             {
                 "type": "embedding_update_callback",
             }
-        ]
+        ],
         "learning_rate_scheduler": {
             "type": "linear_with_warmup",
             "warmup_steps": 10000
@@ -91,6 +91,6 @@ local seed = 2023;
         "num_epochs": 20,
         "patience": 7,
         // TODO: this is the real place to change target gpu
-        "cuda_device": 3
+        "cuda_device": 0
     },
 }
