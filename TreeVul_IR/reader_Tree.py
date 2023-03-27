@@ -139,6 +139,7 @@ class EmbeddingReader(DatasetReader):
         # |- level_node: list of level node (cwe_id)
         # |- num_class: node number
         # |- label2idx: level label => level idx
+        # |- father_idx: the father of level node
 
         cwe_info = json.load(open(cwe_info_file, "r"))
         self._level_num = level_num
@@ -154,15 +155,21 @@ class EmbeddingReader(DatasetReader):
             self._level_node[cwe["Depth"]].append(cwe_id)
             self._cwe_path[cwe_id] = cwe_info[cwe_id]["Path"].insert(0, "SBR")
             while len(self._cwe_path[cwe_id]) < level_num: self._cwe_path[cwe_id].append("neg")
-        self._label2idx = list()
+        self._label2idx = dict()
         self._num_class = dict()
+        self._node_father = dict()
+        # the father idx of neg or the root level is 0
         for l in range(level_num): 
             self._num_class[l] = len(self._level_node[l])
             logger.info(f"level_{self._num_class[l]} has {self._num_class[l]} classes")
-            self._label2idx.append({
+            self._label2idx[l] = {
                 self._level_node[l][i]: i
-                for i in range(self._level_num[l])
-            })
+                for i in range(self._num_class[l])
+            }
+            self._node_father[l] = [
+                self._label2idx[self._cwe_path[self._level_node[l][i]][l-1]] if l>0 else 0
+                for i in range(self._num_class[l])
+            ]
 
     def _read(self, file_path) -> Iterable[Instance]:
         # file_path target the level, like l0, l1, l2...

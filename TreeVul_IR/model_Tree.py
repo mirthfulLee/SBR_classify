@@ -85,7 +85,6 @@ class CustomCrossEntropyLoss(nn.Module):
             loss_sum += F.cross_entropy(level_prob[i], level_label[i])
         return loss_sum
 
-# TODO: top k inference!!
 class PathFractionMetric(Metric):
     def __init__(self, level_num) -> None:
         super().__init__()
@@ -126,6 +125,7 @@ class ModelTree(Model):
         self._cwe_description = reader._cwe_description
         self._cwe_path = reader._cwe_path
         self._label2idx = reader._label2idx
+        self._node_father = reader._node_father
         
         self._instance4update = list()
         for l in range(self._level_num):
@@ -200,7 +200,7 @@ class ModelTree(Model):
             return output_dict
         level_prob = list()
         level_prob.append(self._root_classifier(root_emb))
-        # TODO: build level label from CWE_ID
+        # build level label from CWE_ID
         level_label = list()
         for l in range(self._level_num):
             labels = list()
@@ -208,7 +208,7 @@ class ModelTree(Model):
                 labels.append(self._cwe_path[ins["CWE_ID"]][l])
             level_label.append(torch.IntTensor(labels))
 
-        # TODO: add unlabel process
+        # add unlabel process
         for l in range(self._level_num - 1):
             if process == "train":
                 upper_level_info = level_label[l]
@@ -234,13 +234,34 @@ class ModelTree(Model):
     
     def make_output_human_readable(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         # write the experiments during the test
+        # beam search
         out2file = list()
-        for l in range(self._level_num):
-            pred = np.argmax(output_dict["probs"][l], axis=1)
-            for i, idx in enumerate(pred):
-                out2file.append({f"label_l{l}": self._level_node[l][output_dict["label"][l][i]],
-                                 f"predict_l{l}": self._level_node[l][idx],
-                                 f"prob_l{l}": output_dict["probs"][l][i][output_dict["label"][l][i]]})
+        # pred = np.argmax(output_dict["probs"][l], axis=1)
+        for i in len(output_dict["probs"][0].shape[0]):
+            # sample i
+            obj = dict()
+            cwe_id = output_dict["meta"]["CWE_ID"]
+            obj["CWE_ID"] = cwe_id
+            obj["PATH"] = self._cwe_path[cwe_id]
+            p = dict()
+            # record the level prob for further analyse
+            for l in range(self._level_num):
+                if l == 0:
+                    p[l] = output_dict["probs"][l][i]
+                else:
+                    p[l] = [
+                        p[l-1][self._node_father[k]] * output_dict["probs"][l][i][k]
+                        for k in range(self._num_class[l])
+                    ]
+                
+                obj[f"l{l}"] = {
+                    self._level_node[k]: output_dict["probs"][l][i][k]
+                    for k in range(self._num_class[l])
+                }
+            l = self._level_num - 1
+            while l>0 and np.argmax(p[l]) == 0: l = l-1
+            obj["PREDICT"] = self._cwe_path[self._level_node[l][np.argmax(p[l])]]
+            out2file.append(obj)
         return out2file
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
