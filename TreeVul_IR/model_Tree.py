@@ -116,7 +116,7 @@ class ModelTree(Model):
                 #  pooling_method: str = "bilstm+avg", # bilstm+avg or CLS
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
-
+        self._level_num = level_num
         reader = EmbeddingReader(tokenizer = PretrainedTransformerTokenizer(PTM, add_special_tokens=True, max_length=512),
                                  token_indexers = {"tokens": PretrainedTransformerIndexer(PTM, namespace="tags")},
                                  level_num=level_num, cwe_info_file=cwe_info_file)
@@ -129,24 +129,24 @@ class ModelTree(Model):
         
         self._instance4update = list()
         for l in range(self._level_num):
-            self._instance4update.append(list(reader.read_(f"l{l}")))
+            self._instance4update.append(list(reader.read(f"l{l}")))
 
-        self._dropout = Dropout(dropout)
-        self._level_num = level_num
+        self._dropout = dropout
         self._PTM = PTM
         self._text_field_embedder = text_field_embedder
         
         self._embedding_dim = self._text_field_embedder.get_output_dim()
         self._root_classifier = nn.Sequential(
             FeedForward(self._embedding_dim, 1, self._embedding_dim, torch.nn.ReLU(), self._dropout), 
-            nn.Linear(self._embedding_dim, self._node_num, bias=False),  
+            nn.Linear(self._embedding_dim, self._num_class[0], bias=False),
+            nn.Softmax(dim=1)
         )
         self._pooler = token_level_avg
         self._bilstm = nn.ModuleList([
             nn.LSTM(
                 input_size = self._embedding_dim, 
                 hidden_size = self._embedding_dim // 2, 
-                num_levels = 1,
+                num_layers = 1,
                 batch_first = True, 
                 dropout = dropout,
                 bidirectional = 2
@@ -166,8 +166,7 @@ class ModelTree(Model):
             })
         # init path fraction metric
         self._path_fraction_metric = PathFractionMetric(level_num=level_num)
-        self._loss = CustomCrossEntropyLoss()
-        self._cwe_instance = list(list(reader.read(f"l{l}")) for l in range(level_num))
+        self._loss = CustomCrossEntropyLoss(level_num)
         initializer(self)
 
     def update_embeddings(self):
@@ -175,7 +174,12 @@ class ModelTree(Model):
         logger.info("updating golden embeddings")
         with torch.no_grad():
             for l in range(self._level_num - 1):
-                self.forward_on_instances(self._cwe_instance[l])
+                self.forward_on_instances(self._instance4update[l])
+    
+    def get_path(self, cwe_id):
+        if cwe_id not in self._cwe_path.keys(): cwe_id = "SBR"
+        elif cwe_id == "": cwe_id = "neg"
+        return self._cwe_path[cwe_id]
 
     def forward(self,
                 process,
@@ -205,7 +209,7 @@ class ModelTree(Model):
         for l in range(self._level_num):
             labels = list()
             for ins in metadata:
-                labels.append(self._cwe_path[ins["CWE_ID"]][l])
+                labels.append(self.get_path(ins["CWE_ID"])[l])
             level_label.append(torch.IntTensor(labels))
 
         # add unlabel process
@@ -242,7 +246,7 @@ class ModelTree(Model):
             obj = dict()
             cwe_id = output_dict["meta"]["CWE_ID"]
             obj["CWE_ID"] = cwe_id
-            obj["PATH"] = self._cwe_path[cwe_id]
+            obj["PATH"] = self.get_path(cwe_id)
             p = dict()
             # record the level prob for further analyse
             for l in range(self._level_num):

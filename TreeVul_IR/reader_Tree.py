@@ -45,16 +45,17 @@ class ReaderTree(DatasetReader):
             return self._dataset[file_path]
         samples = pd.read_csv(file_path, header=0)
         samples.fillna("", inplace=True)
+        samples["description"] = samples.apply(lambda sample: sample["Issue_Title"]+". "+sample["Issue_Body"], axis=1)
         dataset = {
-            "pos": samples.loc[samples["CWE_ID"]!=""],
-            "neg": samples.loc[samples["CWE_ID"]==""]
+            "pos": samples.loc[samples["CWE_ID"] != "", ["description", "CWE_ID"]],
+            "neg": samples.loc[samples["CWE_ID"] == "", ["description", "CWE_ID"]]
         }
         self._dataset[file_path] = dataset
 
         return self._dataset[file_path]
 
     @overrides
-    def _read(self, file_path):
+    def _read(self, file_path) -> Iterable[Instance]:
         dataset = self.read_dataset(file_path)
         classes_districution = {"pos": dataset["pos"].shape[0], "neg": dataset["neg"].shape[0]}
         sample_num = classes_districution["pos"] + classes_districution["neg"]
@@ -66,9 +67,9 @@ class ReaderTree(DatasetReader):
 
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
-                yield self.text_to_instance((sample, sample), type_="unlabel")
+                yield self.text_to_instance(sample, type_="unlabel")
             for _, sample in dataset["neg"].iterrows():
-                yield self.text_to_instance((sample, sample), type_="unlabel")
+                yield self.text_to_instance(sample, type_="unlabel")
             logger.info(f"Predict sample num is {sample_num}")
 
         elif "validation_" in file_path:
@@ -76,9 +77,9 @@ class ReaderTree(DatasetReader):
             logger.info("Begin testing------")
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
-                yield self.text_to_instance((sample, sample), type_="unlabel")
+                yield self.text_to_instance(sample, type_="unlabel")
             for _, sample in dataset["neg"].iterrows():
-                yield self.text_to_instance((sample, sample), type_="unlabel")
+                yield self.text_to_instance(sample, type_="unlabel")
             logger.info(f"Test sample num is {sample_num}")
             
         else:
@@ -92,18 +93,17 @@ class ReaderTree(DatasetReader):
                 if index < classes_districution["pos"]:
                     # pos sample
                     sample = dataset["pos"].iloc[index, :]
-                    yield self.text_to_instance((sample), type_="train")
+                    yield self.text_to_instance(sample, type_="train")
                     same_num += 1  # matched pairs
                 # determine whether make neg sample or not p = select_neg (0.1)
                 elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
                     sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
-                    yield self.text_to_instance((sample), type_="train")
+                    yield self.text_to_instance(sample, type_="train")
                     diff_num += 1
 
             logger.info(f"Dataset Count: Same : {same_num} / Diff : {diff_num}")
 
-    @overrides
-    def text_to_instance(self, ins, type_="train") -> Instance:  # type: ignore
+    def text_to_instance(self, p, type_="train") -> Instance:  # type: ignore
         '''
         1. process(constant): FlagField - whether it’s training process or not
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
@@ -113,10 +113,10 @@ class ReaderTree(DatasetReader):
         # share the code between predictor and trainer, hence the label field is optional
         fields: Dict[str, Field] = {}
         fields["process"] = FlagField(type_)
-        fields["sample"] = TextField(self._tokenizer.tokenize(ins["description"]), self._token_indexers)
+        fields["sample"] = TextField(self._tokenizer.tokenize(p["description"]), self._token_indexers)
         # get path of instance
         fields['metadata'] = MetadataField({
-            "CWE_ID": ins["CWE_ID"]
+            "CWE_ID": p["CWE_ID"]
         })
 
         return Instance(fields)
@@ -141,7 +141,7 @@ class EmbeddingReader(DatasetReader):
         # |- label2idx: level label => level idx
         # |- father_idx: the father of level node
 
-        cwe_info = json.load(open(cwe_info_file, "r"))
+        self._cwe_info = json.load(open(cwe_info_file, "r"))
         self._level_num = level_num
         self._cwe_path = {"neg": ["neg" for _ in range(level_num)],
                           "SBR": ["SBR"]+["neg"]*(level_num-1)}
@@ -149,12 +149,15 @@ class EmbeddingReader(DatasetReader):
                                  "SBR": "A security bug report that contains a vulnerability typically includes the following elements: Description of the vulnerability: The report should describe the vulnerability in detail, including how it was discovered, the affected component or feature, and the potential consequences of exploiting the vulnerability. Steps to reproduce: The report should include a detailed description of the steps required to reproduce the vulnerability, including any specific configuration or settings required. Impact assessment: The report should include an assessment of the potential impact of the vulnerability, including the severity of the potential consequences and the likelihood of exploitation. Recommendations: The report should include recommendations for addressing the vulnerability, such as applying a patch or upgrading to a newer version of the software. Contact information: The report should include contact information for the person submitting the report, in case the developer or administrator needs to follow up with additional questions or clarifications."}
         self._level_node = {i : ["neg"] for i in range(level_num)}
         self._level_node[0].append("SBR")
-        for cwe_id, cwe in cwe_info:
+        for cwe_id, cwe in self._cwe_info.items():
             if cwe["Depth"] >= level_num: 
                 continue
+            self._cwe_description[cwe_id] = cwe["Description"]
             self._level_node[cwe["Depth"]].append(cwe_id)
-            self._cwe_path[cwe_id] = cwe_info[cwe_id]["Path"].insert(0, "SBR")
+            self._cwe_path[cwe_id] = cwe["Path"]
+            self._cwe_path[cwe_id].insert(0, "SBR")
             while len(self._cwe_path[cwe_id]) < level_num: self._cwe_path[cwe_id].append("neg")
+            self._cwe_path[cwe_id][:level_num]
         self._label2idx = dict()
         self._num_class = dict()
         self._node_father = dict()
@@ -167,23 +170,24 @@ class EmbeddingReader(DatasetReader):
                 for i in range(self._num_class[l])
             }
             self._node_father[l] = [
-                self._label2idx[self._cwe_path[self._level_node[l][i]][l-1]] if l>0 else 0
+                self._label2idx[l-1][self._cwe_path[self._level_node[l][i]][l-1]] if l>0 else 0
                 for i in range(self._num_class[l])
             ]
 
+    @overrides
     def _read(self, file_path) -> Iterable[Instance]:
         # file_path target the level, like l0, l1, l2...
         # neg node is always the 0-idx
         level = int(file_path[1:])
         for cwe_id in self._level_node[level]:
             node = {
-                "sample": self._cwe_info[cwe_id]["Description"],
+                "sample": self._cwe_description[cwe_id],
                 "CWE_ID": cwe_id,
                 "level": level
             }
             yield self.text_to_instance(node)
 
-    def text_to_instance(self, node) -> Instance:
+    def text_to_instance(self, node, type_="train") -> Instance:
         fields: Dict[str, Field] = {}
         fields["process"] = FlagField("update")
         fields["sample"] = TextField(self._tokenizer.tokenize(node["sample"]), self._token_indexers)

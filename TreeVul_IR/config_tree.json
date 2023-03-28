@@ -13,7 +13,7 @@ local seed = 2023;
             "type": "pretrained_transformer",
             "model_name": bert_model,
             "add_special_tokens": true,
-            "max_length": 512
+            "max_length": 256
         },
         "token_indexers": {
             "tokens": {
@@ -23,10 +23,10 @@ local seed = 2023;
             }
         }
     },
-    "train_data_path": "data/train_samples.json",
-    // "train_data_path": "data/sub_train_samples.json",
-    "validation_data_path": "data/validation_samples.json",
-    // "validation_data_path": "data/sub_validation_samples.json",
+    // "train_data_path": "data/train_samples_compressed.csv",
+    "train_data_path": "data/sub_train_samples_compressed.csv",
+    // "validation_data_path": "data/validation_samples_compressed.csv",
+    "validation_data_path": "data/sub_validation_samples_compressed.csv",
     "model": {
         "type": "model_tree",
         "dropout": 0.1,
@@ -35,10 +35,10 @@ local seed = 2023;
         "text_field_embedder": {
             "token_embedders": {
                 "tokens": {
-                    "type": "pretrained_transformer",
+                    "type": "custom_pretrained_transformer",
                     "model_name": bert_model,
                     "train_parameters": true,
-                    "override_weights_file": "further_pretrain/out_wwm/pytorch_model.bin"
+                    "pretrained_model_path": "further_pretrain/out_wwm/"
                 }
             }
         }
@@ -46,12 +46,12 @@ local seed = 2023;
     "data_loader": {
         "batch_size": 32,
         "shuffle": false,
-        "max_instances_in_memory": 4096
+        // "max_instances_in_memory": 4096
     },
     "validation_data_loader": {
         "batch_size": 512,
         "shuffle": false,
-        "max_instances_in_memory": 4096
+        // "max_instances_in_memory": 4096
     },
     "trainer": {
         "type": "gradient_descent",
@@ -75,7 +75,7 @@ local seed = 2023;
             ]
         },
         "checkpointer": {
-            "num_serialized_models_to_keep": 1,
+            "keep_most_recent_by_count": 1,
         },
         "callbacks": [
             {
