@@ -23,10 +23,10 @@ local seed = 2023;
             }
         }
     },
-    // "train_data_path": "data/train_samples_compressed.csv",
-    "train_data_path": "data/sub_train_samples_compressed.csv",
-    // "validation_data_path": "data/validation_samples_compressed.csv",
-    "validation_data_path": "data/sub_validation_samples_compressed.csv",
+    "train_data_path": "data/train_samples_compressed.csv",
+    // "train_data_path": "data/sub_train_samples_compressed.csv",
+    "validation_data_path": "data/validation_samples_compressed.csv",
+    // "validation_data_path": "data/sub_validation_samples_compressed.csv",
     "model": {
         "type": "model_tree",
         "dropout": 0.1,
@@ -44,14 +44,14 @@ local seed = 2023;
         }
     },
     "data_loader": {
-        "batch_size": 32,
+        "batch_size": 16,
         "shuffle": false,
-        // "max_instances_in_memory": 4096
+        // "max_instances_in_memory": 8192
     },
     "validation_data_loader": {
         "batch_size": 512,
         "shuffle": false,
-        // "max_instances_in_memory": 4096
+        // "max_instances_in_memory": 8192
     },
     "trainer": {
         "type": "gradient_descent",
@@ -88,9 +88,9 @@ local seed = 2023;
         },
         "num_gradient_accumulation_steps": 2,
         // "validation_metric": "+f1-score_l0", # maximize f1 score of root or use default "-loss"
-        "num_epochs": 20,
+        "num_epochs": 30,
         "patience": 7,
         // TODO: this is the real place to change target gpu
-        "cuda_device": 0
+        "cuda_device": 3
     },
 }

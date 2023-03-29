@@ -87,21 +87,21 @@ class ReaderTree(DatasetReader):
             logger.info("loading training examples ...")
             shuffle_index = list(range(sample_num))
             random.shuffle(shuffle_index)
-            same_num = 0
-            diff_num = 0
+            sbr_num = 0
+            nsbr_num = 0
             for index in shuffle_index:
                 if index < classes_districution["pos"]:
                     # pos sample
                     sample = dataset["pos"].iloc[index, :]
                     yield self.text_to_instance(sample, type_="train")
-                    same_num += 1  # matched pairs
+                    sbr_num += 1  # matched pairs
                 # determine whether make neg sample or not p = select_neg (0.1)
                 elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
                     sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
                     yield self.text_to_instance(sample, type_="train")
-                    diff_num += 1
+                    nsbr_num += 1
 
-            logger.info(f"Dataset Count: Same : {same_num} / Diff : {diff_num}")
+            logger.info(f"Dataset Count: SBR : {sbr_num} / nSBR : {nsbr_num}")
 
     def text_to_instance(self, p, type_="train") -> Instance:  # type: ignore
         '''

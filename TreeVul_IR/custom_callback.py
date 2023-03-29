@@ -9,6 +9,11 @@ class CustomValidation(TrainerCallback):
                  serialization_dir: str = None) -> None:
         super().__init__(serialization_dir)
         # for custom validation, this reader is used to read the golden anchor
+        
+    def on_start(self, trainer: "GradientDescentTrainer", is_primary: bool = True, **kwargs) -> None:
+        model = trainer.model
+        model.update_embeddings()
+        return
 
     def on_epoch(self, trainer: "GradientDescentTrainer", metrics: Dict[str, Any], epoch: int, is_primary: bool, **kwargs) -> None:
         # not in a distributed mode，trainer.model euqals to trainer._pytorch_model
@@ -17,4 +22,5 @@ class CustomValidation(TrainerCallback):
         model.update_embeddings()
 
         # data_loader will re-read the dataset before next epoch (all the pos samples and re-sampled negative samples)
-        trainer.data_loader._instances = None
+        # trainer.data_loader._instances = None
+        return

@@ -54,11 +54,12 @@ class LevelClassifier(nn.Module):
             nn.Linear(embedding_dim, self._node_num, bias=False),  
         )
         # the embedding vector of upper-node
-        self._upper_level_embeddings = None
+        self._upper_level_embeddings = nn.Parameter(torch.zeros(upper_node_num, embedding_dim),
+                                                    requires_grad=False)
 
     def update_upper_level_embeddings(self, upper_level_embeddings):
         # upper_level_embeddings size: (upper_node_num, embedding_dim)
-        self._upper_level_embeddings = upper_level_embeddings
+        self._upper_level_embeddings = nn.Parameter(upper_level_embeddings, requires_grad=False)
 
     def forward(self, x, upper_level_info):
         '''
@@ -89,17 +90,21 @@ class PathFractionMetric(Metric):
     def __init__(self, level_num) -> None:
         super().__init__()
         self._level_num = level_num
-        self.total_num = 0
-        self.matched_num = 0
+        self.total_num: int = 0
+        self.matched_num: int = 0
     
-    def __call__(self, predictions, gold_labels, mask: Optional[torch.BoolTensor]):
+    def __call__(self, predictions, gold_labels, mask: Optional[torch.BoolTensor]=None):
         for l in range(self._level_num):
-            pred = np.argmax(predictions[l], axis=1)
-            self.matched_num += np.sum(pred == gold_labels[l])
+            pred = torch.argmax(predictions[l], dim=1)
+            self.matched_num += torch.sum(pred == gold_labels[l]).item()
             self.total_num += predictions[l].shape[0]
     
+    def reset(self):
+        self.matched_num = 0
+        self.total_num = 0
+    
     def get_metric(self, reset: bool):
-        result = {"path_fraction": self.matched_num / self.total_num}
+        result = self.matched_num / self.total_num
         if reset:
             self.reset()
         return result
@@ -146,10 +151,11 @@ class ModelTree(Model):
             nn.LSTM(
                 input_size = self._embedding_dim, 
                 hidden_size = self._embedding_dim // 2, 
+                bias = True,
                 num_layers = 1,
                 batch_first = True, 
                 dropout = dropout,
-                bidirectional = 2
+                bidirectional = True
             )
             for _ in range(1, level_num)
         ])
@@ -161,8 +167,10 @@ class ModelTree(Model):
         self._metrics = list()
         for l in range(self._level_num):
             self._metrics.append({
-                "accuracy": CategoricalAccuracy(),
-                "f1-score": FBetaMeasure(beta=1.0, average=None, labels=range(self._num_class[l])),  # return list[float]
+                # "accuracy": CategoricalAccuracy(),
+                "micro": FBetaMeasure(beta=1.0, average="micro", labels=range(self._num_class[l])),  # return list[float]
+                "macro": FBetaMeasure(beta=1.0, average="macro", labels=range(self._num_class[l])),  # return list[float]
+                "weighted": FBetaMeasure(beta=1.0, average="weighted", labels=range(self._num_class[l])),  # return list[float]
             })
         # init path fraction metric
         self._path_fraction_metric = PathFractionMetric(level_num=level_num)
@@ -180,6 +188,11 @@ class ModelTree(Model):
         if cwe_id not in self._cwe_path.keys(): cwe_id = "SBR"
         elif cwe_id == "": cwe_id = "neg"
         return self._cwe_path[cwe_id]
+    
+    def get_path_idx(self, cwe_id):
+        path = self.get_path(cwe_id)
+        idx_path = [self._label2idx[l][path[l]] for l in range(self._level_num)]
+        return idx_path
 
     def forward(self,
                 process,
@@ -194,9 +207,8 @@ class ModelTree(Model):
         output_dict["process"] = process
         if metadata:
             output_dict["meta"] = metadata
-        # path = self._nsbr_path if ins["CWE_ID"] == "" else self._cwe_info[ins["CWE_ID"]]["Path"]
-        # level_label = [path[:, l] for l in range(self._level_num)]
-        root_emb = self._pooler(self._text_field_embedder(sample))
+        embedding = self._text_field_embedder(sample)
+        root_emb = self._pooler(embedding)
         if process == "update":
             # update embedding for corresponding level classfier
             l = metadata[0]["level"]
@@ -209,28 +221,29 @@ class ModelTree(Model):
         for l in range(self._level_num):
             labels = list()
             for ins in metadata:
-                labels.append(self.get_path(ins["CWE_ID"])[l])
-            level_label.append(torch.IntTensor(labels))
+                labels.append(self.get_path_idx(ins["CWE_ID"])[l])
+            level_label.append(torch.tensor(labels, dtype=torch.int64, device=self._get_prediction_device()))
 
         # add unlabel process
         for l in range(self._level_num - 1):
+            embedding, _  = self._bilstm[l](embedding)
+            level_emb = self._pooler(embedding)
             if process == "train":
                 upper_level_info = level_label[l]
             else:
                 # process for "unlabel"
-                upper_level_info = np.argmax(level_prob[l], axis=1)
-            sample = self._bilstm(sample)
-            level_emb = self._pooler(sample)
-            level_prob.append(self._level_classifiers(level_emb, 
-                                                      F.one_hot(upper_level_info, num_classes=self._num_class[l])))
+                upper_level_info = torch.argmax(level_prob[l], dim=1)
+            upper_level_info = F.one_hot(upper_level_info, num_classes=self._num_class[l])
+            upper_level_info = upper_level_info.to(torch.float).to(level_emb.get_device())
+            level_prob.append(self._level_classifiers[l](level_emb, upper_level_info))
             
-        output_dict["prob"] = level_prob
-        output_dict["label"] = level_label
         loss = self._loss(level_prob, level_label)
+        output_dict["probs"] = level_prob
+        output_dict["label"] = level_label
         output_dict['loss'] = loss
         # compute metric
-        for l in range(self._level_num - 1):
-            for metric_name, metric in self._metrics.items():
+        for l in range(self._level_num):
+            for metric_name, metric in self._metrics[l].items():
                 metric(predictions=level_prob[l], gold_labels=level_label[l])
         self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
 
@@ -239,6 +252,8 @@ class ModelTree(Model):
     def make_output_human_readable(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         # write the experiments during the test
         # beam search
+        if "process" not in ["test", "unlabel"]:
+            return output_dict
         out2file = list()
         # pred = np.argmax(output_dict["probs"][l], axis=1)
         for i in len(output_dict["probs"][0].shape[0]):
@@ -271,13 +286,11 @@ class ModelTree(Model):
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         metrics = dict()
         for l in range(self._level_num):
-            metrics[f'accuracy_l{l}'] = self._metrics[l]['accuracy'].get_metric(reset)
-            precision, recall, fscore = self._metrics[l]['f1-score'].get_metric(reset).values()
-            metrics[f'precision_l{l}'] = precision
-            metrics[f'recall_l{l}'] = recall
-            metrics[f'f1-score_l{l}'] = fscore
-        if reset:
-            # only calculate this metric when the entire evaluation is done
-            metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
-
+            # metrics[f'accuracy_l{l}'] = self._metrics[l]['accuracy'].get_metric(reset)
+            for name, metric in self._metrics[l].items():
+                precision, recall, fscore = metric.get_metric(reset).values()
+                metrics[f'{name}_precision_l{l}'] = precision
+                metrics[f'{name}_recall_l{l}'] = recall
+                metrics[f'{name}_f1-score_l{l}'] = fscore
+        metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
         return metrics
