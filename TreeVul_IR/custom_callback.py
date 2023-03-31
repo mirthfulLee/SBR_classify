@@ -22,5 +22,5 @@ class CustomValidation(TrainerCallback):
         model.update_embeddings()
 
         # data_loader will re-read the dataset before next epoch (all the pos samples and re-sampled negative samples)
-        # trainer.data_loader._instances = None
+        trainer.data_loader._instances = None
         return

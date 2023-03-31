@@ -31,7 +31,7 @@ class ReaderTree(DatasetReader):
     def __init__(self,
                  tokenizer: Tokenizer = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
-                 sample_neg: float = 0.05) -> None:
+                 sample_neg: float = 0.01) -> None:
         super().__init__()
 
         self._token_indexers = token_indexers  # token indexers for text
@@ -63,23 +63,23 @@ class ReaderTree(DatasetReader):
 
         if "test_" in file_path:
             # provide test data
-            logger.info("Begin predict------")
+            logger.info("Begin test process------")
 
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
-                yield self.text_to_instance(sample, type_="unlabel")
+                yield self.text_to_instance(sample, process="test")
             for _, sample in dataset["neg"].iterrows():
-                yield self.text_to_instance(sample, type_="unlabel")
-            logger.info(f"Predict sample num is {sample_num}")
+                yield self.text_to_instance(sample, process="test")
+            logger.info(f"Test sample num is {sample_num}")
 
         elif "validation_" in file_path:
             # provide valdiation data
-            logger.info("Begin testing------")
+            logger.info("Begin validation process ------")
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
-                yield self.text_to_instance(sample, type_="unlabel")
+                yield self.text_to_instance(sample, process="unlabel")
             for _, sample in dataset["neg"].iterrows():
-                yield self.text_to_instance(sample, type_="unlabel")
+                yield self.text_to_instance(sample, process="unlabel")
             logger.info(f"Test sample num is {sample_num}")
             
         else:
@@ -93,17 +93,17 @@ class ReaderTree(DatasetReader):
                 if index < classes_districution["pos"]:
                     # pos sample
                     sample = dataset["pos"].iloc[index, :]
-                    yield self.text_to_instance(sample, type_="train")
+                    yield self.text_to_instance(sample, process="train")
                     sbr_num += 1  # matched pairs
                 # determine whether make neg sample or not p = select_neg (0.1)
                 elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
                     sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
-                    yield self.text_to_instance(sample, type_="train")
+                    yield self.text_to_instance(sample, process="train")
                     nsbr_num += 1
 
             logger.info(f"Dataset Count: SBR : {sbr_num} / nSBR : {nsbr_num}")
 
-    def text_to_instance(self, p, type_="train") -> Instance:  # type: ignore
+    def text_to_instance(self, p, process="train") -> Instance:  # type: ignore
         '''
         1. process(constant): FlagField - whether it’s training process or not
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
@@ -112,7 +112,7 @@ class ReaderTree(DatasetReader):
         '''
         # share the code between predictor and trainer, hence the label field is optional
         fields: Dict[str, Field] = {}
-        fields["process"] = FlagField(type_)
+        fields["process"] = FlagField(process)
         fields["sample"] = TextField(self._tokenizer.tokenize(p["description"]), self._token_indexers)
         # get path of instance
         fields['metadata'] = MetadataField({
@@ -187,7 +187,7 @@ class EmbeddingReader(DatasetReader):
             }
             yield self.text_to_instance(node)
 
-    def text_to_instance(self, node, type_="train") -> Instance:
+    def text_to_instance(self, node, process="update") -> Instance:
         fields: Dict[str, Field] = {}
         fields["process"] = FlagField("update")
         fields["sample"] = TextField(self._tokenizer.tokenize(node["sample"]), self._token_indexers)

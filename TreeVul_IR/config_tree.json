@@ -32,6 +32,12 @@ local seed = 2023;
         "dropout": 0.1,
         "PTM": bert_model,
         "cwe_info_file": cwe_info_file,
+        "level_num": 3,
+        "weight": [
+            0.3,
+            0.3,
+            0.3
+        ],
         "text_field_embedder": {
             "token_embedders": {
                 "tokens": {
@@ -50,8 +56,9 @@ local seed = 2023;
     },
     "validation_data_loader": {
         "batch_size": 512,
-        "shuffle": false,
-        // "max_instances_in_memory": 8192
+        "shuffle": false, // global shuffle in reader_tree
+        // "max_instances_in_memory": 8192,
+        // "batches_per_epoch": 128
     },
     "trainer": {
         "type": "gradient_descent",
@@ -67,6 +74,15 @@ local seed = 2023;
                         "requires_grad": true
                     }
                 ],
+                [
+                    [
+                        "_root_pooler"
+                    ],
+                    {
+                        "lr": 5e-5,
+                        "requires_grad": true
+                    }
+                ]
             ],
             "lr": 1e-4,
             "betas": [
@@ -84,12 +100,12 @@ local seed = 2023;
         ],
         "learning_rate_scheduler": {
             "type": "linear_with_warmup",
-            "warmup_steps": 10000
+            "warmup_steps": 5000
         },
         "num_gradient_accumulation_steps": 2,
-        // "validation_metric": "+f1-score_l0", # maximize f1 score of root or use default "-loss"
-        "num_epochs": 30,
-        "patience": 7,
+        "validation_metric": "+weighted_f1-score_l0", // maximize f1 score of root or use default "-loss"
+        "num_epochs": 40,
+        "patience": 8,
         // TODO: this is the real place to change target gpu
         "cuda_device": 3
     },
