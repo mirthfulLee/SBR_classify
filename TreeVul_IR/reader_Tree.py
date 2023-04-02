@@ -31,13 +31,15 @@ class ReaderTree(DatasetReader):
     def __init__(self,
                  tokenizer: Tokenizer = None,
                  token_indexers: Dict[str, TokenIndexer] = None,
-                 sample_neg: float = 0.01) -> None:
+                 sample_neg: float = 0.01,
+                 skip_neg: bool = False) -> None:
         super().__init__()
 
         self._token_indexers = token_indexers  # token indexers for text
         self._tokenizer = tokenizer
         self._choice_neg = [True, False]
         self._select_neg = [sample_neg, 1 - sample_neg]  # [True, False]
+        self._skip_neg = skip_neg
         self._dataset = dict()  # key is the file path
 
     def read_dataset(self, file_path):
@@ -68,6 +70,7 @@ class ReaderTree(DatasetReader):
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
                 yield self.text_to_instance(sample, process="test")
+            if self._skip_neg: return
             for _, sample in dataset["neg"].iterrows():
                 yield self.text_to_instance(sample, process="test")
             logger.info(f"Test sample num is {sample_num}")
@@ -78,6 +81,7 @@ class ReaderTree(DatasetReader):
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
                 yield self.text_to_instance(sample, process="unlabel")
+            if self._skip_neg: return
             for _, sample in dataset["neg"].iterrows():
                 yield self.text_to_instance(sample, process="unlabel")
             logger.info(f"Test sample num is {sample_num}")
@@ -150,10 +154,11 @@ class EmbeddingReader(DatasetReader):
         self._level_node = {i : ["neg"] for i in range(level_num)}
         self._level_node[0].append("SBR")
         for cwe_id, cwe in self._cwe_info.items():
-            if cwe["Depth"] >= level_num: 
-                continue
+            # if cwe["Depth"] >= level_num: 
+            #     continue
             self._cwe_description[cwe_id] = cwe["Description"]
-            self._level_node[cwe["Depth"]].append(cwe_id)
+            if cwe["Depth"] < level_num: 
+                self._level_node[cwe["Depth"]].append(cwe_id)
             self._cwe_path[cwe_id] = cwe["Path"]
             self._cwe_path[cwe_id].insert(0, "SBR")
             while len(self._cwe_path[cwe_id]) < level_num: self._cwe_path[cwe_id].append("neg")

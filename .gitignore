@@ -9,6 +9,7 @@
 /temp*
 **/out_*
 **/my_*
+**/sbr_*
 **/weighted_*
 /temp
 /test_results/*

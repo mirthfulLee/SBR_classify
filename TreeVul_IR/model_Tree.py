@@ -49,10 +49,11 @@ class LevelClassifier(nn.Module):
             FeedForward(embedding_dim, 1, embedding_dim, torch.nn.ReLU(), dropout), 
             nn.Linear(embedding_dim, self._node_num, bias=False),  
         )
+        self._batch_norm = nn.BatchNorm1d(embedding_dim)
         # the embedding vector of upper-node
         self._upper_level_embeddings = nn.Parameter(torch.zeros(upper_node_num, embedding_dim),
                                                     requires_grad=False)
-        self._merge_gate = GatedSum(input_dim=embedding_dim, activation=torch.nn.Sigmoid())
+        self._gated_merge = GatedSum(input_dim=embedding_dim, activation=torch.nn.Sigmoid())
         
 
     def update_upper_level_embeddings(self, upper_level_embeddings):
@@ -64,9 +65,11 @@ class LevelClassifier(nn.Module):
         x(batch, embedding_dim): the feature of CLS token or AVG used for classifier
         upper_level_info(batch, upper_node_num): the upper level class of each sample in one-hot format
         '''
+        # TODO: add batch norm to x
+        x = self._batch_norm(x)
         # x = x + torch.matmul(upper_level_info, self._upper_level_embeddings) # (batch, upper_node_num) * (upper_node_num, embedding_dim)
-        x = self._merge_gate(input_a = x, 
-                             input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
+        x = self._gated_merge(input_a = x, 
+                              input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
         x = self._classifier(x)
         return F.softmax(x, dim=-1)
 
@@ -123,6 +126,7 @@ class ModelTree(Model):
                  level_num: int = 3, # the first level is SBR and neg
                  cwe_info_file: str = "CWE_info.json",
                  weight: list = None,
+                 update_step: int = 16,
                 #  pooling_method: str = "bilstm+avg", # bilstm+avg or CLS
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
@@ -152,8 +156,10 @@ class ModelTree(Model):
             nn.Softmax(dim=1)
         )
         self._root_pooler = BertPooler(PTM, requires_grad=True, dropout=dropout)
-        self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True)
-        self._bilstm = nn.ModuleList([
+        # self._root_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True)
+        self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True) # averaged vec may be too small
+        # self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim)
+        self._seq2seq_encoder = nn.ModuleList([
             LstmSeq2SeqEncoder(
                 input_size = self._embedding_dim, 
                 hidden_size = self._embedding_dim // 2, 
@@ -178,11 +184,15 @@ class ModelTree(Model):
         # init path fraction metric
         self._path_fraction_metric = PathFractionMetric(level_num=level_num)
         self._loss = CustomCrossEntropyLoss(level_num, weight=weight)
+        self._update_step = update_step
+        # update embeddings when cnt == 0
+        self._update_cnt = 0
         initializer(self)
 
     def update_embeddings(self):
-        # update embeddings before each epoch
+        # update embeddings before between training and validation or at the beginning
         logger.info("updating golden embeddings")
+        self._update_cnt = self._update_step
         with torch.no_grad():
             for l in range(self._level_num - 1):
                 self.forward_on_instances(self._instance4update[l])
@@ -206,6 +216,10 @@ class ModelTree(Model):
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
         3. metadata()
         '''
+        if self._update_cnt == 0 or (process != "train" and self._update_cnt != self._update_step): 
+            self.update_embeddings()
+        elif process == "train": 
+            self._update_cnt -= 1
         output_dict = dict()
         output_dict["process"] = process
         if metadata:
@@ -231,7 +245,7 @@ class ModelTree(Model):
 
         # add unlabel process
         for l in range(self._level_num - 1):
-            embedding = self._bilstm[l](embedding, sample_mask)
+            embedding = self._seq2seq_encoder[l](embedding, sample_mask)
             level_emb = self._level_pooler(embedding, sample_mask)
             if process == "train":
                 upper_level_info = level_label[l]
