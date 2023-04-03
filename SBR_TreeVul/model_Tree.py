@@ -21,8 +21,6 @@ from allennlp.training.util import get_batch_size
 from allennlp.data.tokenizers.pretrained_transformer_tokenizer import PretrainedTransformerTokenizer
 from allennlp.data.token_indexers.pretrained_transformer_indexer import PretrainedTransformerIndexer
 from allennlp.modules.gated_sum import GatedSum
-import random
-from TreeVul_IR.custom_metric import PathFractionMetric, RootF1Metric
 
 from torch import nn
 import torch.nn.functional as F
@@ -67,7 +65,7 @@ class LevelClassifier(nn.Module):
         x(batch, embedding_dim): the feature of CLS token or AVG used for classifier
         upper_level_info(batch, upper_node_num): the upper level class of each sample in one-hot format
         '''
-        # add batch norm to x
+        # TODO: add batch norm to x
         x = self._batch_norm(x)
         # x = x + torch.matmul(upper_level_info, self._upper_level_embeddings) # (batch, upper_node_num) * (upper_node_num, embedding_dim)
         x = self._gated_merge(input_a = x, 
@@ -91,6 +89,33 @@ class CustomCrossEntropyLoss(nn.Module):
             loss_sum += self.weight[l] * F.cross_entropy(level_prob[l], level_label[l])
         return loss_sum
 
+class PathFractionMetric(Metric):
+    '''
+    path accuracy regardless of "neg" labels and root classify task.
+    '''
+    def __init__(self, level_num) -> None:
+        super().__init__()
+        self._level_num = level_num
+        self.total_num: int = 0
+        self.matched_num: int = 0
+    
+    def __call__(self, predictions, gold_labels, mask: Optional[torch.BoolTensor]=None):
+        for l in range(1, self._level_num):
+            pred = torch.argmax(predictions[l], dim=1)
+            self.matched_num += torch.sum((pred == gold_labels[l]) * (gold_labels[l] != 0)).item()
+            # self.total_num += predictions[l].shape[0]
+            self.total_num += torch.sum(gold_labels[l] != 0).item()
+    
+    def reset(self):
+        self.matched_num = 0
+        self.total_num = 0
+    
+    def get_metric(self, reset: bool):
+        result = self.matched_num / max(self.total_num, 1)
+        if reset:
+            self.reset()
+        return result
+
 @Model.register("model_tree")
 class ModelTree(Model):
     def __init__(self,
@@ -100,9 +125,8 @@ class ModelTree(Model):
                  dropout: float = 0.1,
                  level_num: int = 3, # the first level is SBR and neg
                  cwe_info_file: str = "CWE_info.json",
-                 loss_weight: List = None,
+                 weight: list = None,
                  update_step: int = 16,
-                 root_thres: float = 0.5,
                 #  pooling_method: str = "bilstm+avg", # bilstm+avg or CLS
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
@@ -127,7 +151,6 @@ class ModelTree(Model):
         
         self._embedding_dim = self._text_field_embedder.get_output_dim()
         self._root_classifier = nn.Sequential(
-            # nn.BatchNorm1d(embedding_dim),
             FeedForward(self._embedding_dim, 1, self._embedding_dim, torch.nn.ReLU(), self._dropout), 
             nn.Linear(self._embedding_dim, self._num_class[0], bias=False),
             nn.Softmax(dim=1)
@@ -150,21 +173,20 @@ class ModelTree(Model):
             LevelClassifier(self._num_class[l-1], self._num_class[l], self._embedding_dim, self._dropout)
             for l in range(1, level_num)
         ])
-        self._root_metric = RootF1Metric(thres=root_thres)
+        self._root_acc = CategoricalAccuracy()
         # init metrics for each level
-        self._level_f1 = dict()
-        for l in range(1, self._level_num):
-            self._level_f1[l] = {
+        self._level_f1 = list()
+        for l in range(self._level_num):
+            self._level_f1.append({
                 "macro": FBetaMeasure(beta=1.0, average="macro", labels=range(1, self._num_class[l])),
                 "weighted": FBetaMeasure(beta=1.0, average="weighted", labels=range(1, self._num_class[l])),
-            }
+            })
         # init path fraction metric
         self._path_fraction_metric = PathFractionMetric(level_num=level_num)
-        self._loss = CustomCrossEntropyLoss(level_num, weight=loss_weight)
+        self._loss = CustomCrossEntropyLoss(level_num, weight=weight)
         self._update_step = update_step
         # update embeddings when cnt == 0
         self._update_cnt = 0
-        self._teacher_forcing_ratio = 1.0
         initializer(self)
 
     def update_embeddings(self):
@@ -194,13 +216,12 @@ class ModelTree(Model):
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
         3. metadata()
         '''
-        if self._update_cnt == 0 or (process not in ["train", "update"] and self._update_cnt != self._update_step): 
+        if self._update_cnt == 0 or (process != "train" and self._update_cnt != self._update_step): 
             self.update_embeddings()
         elif process == "train": 
             self._update_cnt -= 1
         output_dict = dict()
         output_dict["process"] = process
-        if process == "validation": self._root_metric.validation = True
         if metadata:
             output_dict["meta"] = metadata
         sample_mask = get_text_field_mask(sample)
@@ -222,16 +243,14 @@ class ModelTree(Model):
                 labels.append(self.get_path_idx(ins["CWE_ID"])[l])
             level_label.append(torch.tensor(labels, dtype=torch.int64, device=self._get_prediction_device()))
 
-        # classify process for level > 0 (use upper level info as previous knowledge)
+        # add unlabel process
         for l in range(self._level_num - 1):
             embedding = self._seq2seq_encoder[l](embedding, sample_mask)
             level_emb = self._level_pooler(embedding, sample_mask)
-            # Curriculum Learning: use teacher forcing (with ratio)
-            if process == "train" and random.choices([True, False], weights=[self._teacher_forcing_ratio, 1 - self._teacher_forcing_ratio], k=1)[0]:
-                # use ground truth
+            if process == "train":
                 upper_level_info = level_label[l]
             else:
-                # use upper level predict result
+                # process for "unlabel"
                 upper_level_info = torch.argmax(level_prob[l], dim=1)
             upper_level_info = F.one_hot(upper_level_info, num_classes=self._num_class[l]).to(torch.float)
             level_prob.append(self._level_classifiers[l](level_emb, upper_level_info))
@@ -241,10 +260,10 @@ class ModelTree(Model):
             output_dict["label"] = level_label
             output_dict['loss'] = loss
         # compute metric
-        for l in range(1, self._level_num):
+        self._root_acc(predictions=level_prob[0], gold_labels=level_label[0])
+        for l in range(self._level_num):
             for metric_name, metric in self._level_f1[l].items():
                 metric(predictions=level_prob[l], gold_labels=level_label[l])
-        self._root_metric(predictions=level_prob[0], gold_labels=level_label[0])
         self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
 
         return output_dict
@@ -284,13 +303,14 @@ class ModelTree(Model):
         return out2file
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        metrics = self._root_metric.get_metric(reset)
-        metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
-        for l in range(1, self._level_num):
+        metrics = dict()
+        metrics["root_acc"] = self._root_acc.get_metric(reset)
+        for l in range(self._level_num):
             # metrics[f'accuracy_l{l}'] = self._metrics[l]['accuracy'].get_metric(reset)
             for name, metric in self._level_f1[l].items():
                 precision, recall, fscore = metric.get_metric(reset).values()
                 metrics[f'{name}_precision_l{l}'] = precision
                 metrics[f'{name}_recall_l{l}'] = recall
                 metrics[f'{name}_f1-score_l{l}'] = fscore
+        metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
         return metrics

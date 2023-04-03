@@ -10,8 +10,8 @@ cuda = "2"
 sys.argv = [
     "allennlp",  # command name, not used by main
     "train",
-    "TreeVul_IR/config_sbrtree.json",
-    "-s", "TreeVul_IR/sbr_treevul",
+    "TreeVul_IR/config_tree.json",
+    "-s", "TreeVul_IR/weighted_treevul",
     "--include-package", "TreeVul_IR",
     "--force"
 ]
