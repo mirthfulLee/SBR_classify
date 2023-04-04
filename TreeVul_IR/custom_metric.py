@@ -50,13 +50,15 @@ class RootF1Metric(Metric):
         f1 = 2 * prec * recall / max(prec + recall, 1)
         return prec, recall, f1
     
-    def get_best_threshold(self, interval=[0.3, 0.8]):
+    def get_best_threshold(self, interval=[0.3, 0.96]):
         # the threshold between [0.3, 0.8) with granularity = 0.01 to get best root f1 score
         best_f1 = 0.0
         best_thres = interval[0]
         for thres in np.arange(interval[0], interval[1], 0.01):
             _, _, f1 = self.get_root_metric(thres)
-            if f1 > best_f1: best_thres = thres
+            if f1 > best_f1: 
+                best_thres = thres
+                best_f1 = f1
         logger.info(f"get thres = {thres} for best f1 score")
         self._thres = best_thres
 

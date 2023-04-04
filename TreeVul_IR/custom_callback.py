@@ -8,11 +8,17 @@ logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 @TrainerCallback.register("reload_training_data")
 class ReloadDataCallback(TrainerCallback):
     def __init__(self,
+                 change_neg_ratio_after: Dict[str, float] = None,
                  serialization_dir: str = None) -> None:
+        self.change_neg_ratio_after = change_neg_ratio_after or Dict[str, float]
         super().__init__(serialization_dir)
 
     def on_epoch(self, trainer: "GradientDescentTrainer", metrics: Dict[str, Any], epoch: int, is_primary: bool, **kwargs) -> None:
         # data_loader will re-read the dataset before next epoch (all the pos samples and re-sampled negative samples)
+        if str(epoch) in self.change_neg_ratio_after.keys():
+            neg_ratio = self.change_neg_ratio_after[str(epoch)]
+            trainer.data_loader.reader._neg_ratio = neg_ratio
+            logger.info(f"update the data_reader neg ratio to {neg_ratio}")
         trainer.data_loader._instances = None
         return
 
@@ -20,10 +26,10 @@ class ReloadDataCallback(TrainerCallback):
 @TrainerCallback.register("dynamic_loss_weight")
 class DynamicLossWeightCallback(TrainerCallback):
     def __init__(self,
-                 epoch_weight_map: Dict[int, List] = None,
+                 epoch_weight_map: Dict[str, List[float]] = None,
                  serialization_dir: str = None) -> None:
         super().__init__(serialization_dir)
-        self.epoch_weight_map = epoch_weight_map or Dict[int, Any]
+        self.epoch_weight_map = epoch_weight_map or Dict[str, Any]
     
     def on_start(self, trainer: "GradientDescentTrainer", is_primary: bool = True, **kwargs) -> None:
         # check the weight size
@@ -35,8 +41,8 @@ class DynamicLossWeightCallback(TrainerCallback):
 
     def on_epoch(self, trainer: "GradientDescentTrainer", metrics: Dict[str, Any], epoch: int, is_primary: bool, **kwargs) -> None:
         # data_loader will re-read the dataset before next epoch (all the pos samples and re-sampled negative samples)
-        if epoch in self.epoch_weight_map.keys():
-            weight = self.epoch_weight_map[epoch]
+        if str(epoch) in self.epoch_weight_map.keys():
+            weight = self.epoch_weight_map[str(epoch)]
             trainer.model._loss.weight = weight
             logger.info(f"update the loss weight to {weight}")
 

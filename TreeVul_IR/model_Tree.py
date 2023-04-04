@@ -235,15 +235,15 @@ class ModelTree(Model):
                 upper_level_info = torch.argmax(level_prob[l], dim=1)
             upper_level_info = F.one_hot(upper_level_info, num_classes=self._num_class[l]).to(torch.float)
             level_prob.append(self._level_classifiers[l](level_emb, upper_level_info))
+
+            for metric_name, metric in self._level_f1[l+1].items():
+                metric(predictions=level_prob[l+1], gold_labels=level_label[l+1], mask=(upper_level_info[:, 0] == 0))
         output_dict["probs"] = level_prob
         if process not in ["test", "predict"]:
             loss = self._loss(level_prob, level_label)
             output_dict["label"] = level_label
             output_dict['loss'] = loss
         # compute metric
-        for l in range(1, self._level_num):
-            for metric_name, metric in self._level_f1[l].items():
-                metric(predictions=level_prob[l], gold_labels=level_label[l])
         self._root_metric(predictions=level_prob[0], gold_labels=level_label[0])
         self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
 

@@ -37,8 +37,7 @@ class ReaderTree(DatasetReader):
 
         self._token_indexers = token_indexers  # token indexers for text
         self._tokenizer = tokenizer
-        self._choice_neg = [True, False]
-        self._select_neg = [sample_neg, 1 - sample_neg]  # [True, False]
+        self._neg_ratio = sample_neg
         self._skip_neg = skip_neg
         self._dataset = dict()  # key is the file path
 
@@ -100,7 +99,7 @@ class ReaderTree(DatasetReader):
                     yield self.text_to_instance(sample, process="train")
                     sbr_num += 1  # matched pairs
                 # determine whether make neg sample or not p = select_neg (0.1)
-                elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
+                elif random.choices([True, False], weights=[self._neg_ratio, 1 - self._neg_ratio], k=1)[0]:
                     sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
                     yield self.text_to_instance(sample, process="train")
                     nsbr_num += 1
