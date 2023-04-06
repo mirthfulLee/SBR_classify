@@ -73,7 +73,7 @@ class LevelClassifier(nn.Module):
         x = self._gated_merge(input_a = x, 
                               input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
         x = self._classifier(x)
-        return F.softmax(x, dim=-1)
+        return x
 
 
 class CustomCrossEntropyLoss(nn.Module):
@@ -85,10 +85,10 @@ class CustomCrossEntropyLoss(nn.Module):
         self.level_num = level_num
         self.weight = weight or [1/level_num for _ in range(level_num)]
 
-    def forward(self, level_prob, level_label):
+    def forward(self, level_logits, level_label):
         loss_sum = 0
         for l in range(self.level_num):
-            loss_sum += self.weight[l] * F.cross_entropy(level_prob[l], level_label[l])
+            loss_sum += self.weight[l] * F.cross_entropy(level_logits[l], level_label[l])
         return loss_sum
 
 @Model.register("model_tree")
@@ -130,7 +130,6 @@ class ModelTree(Model):
             # nn.BatchNorm1d(embedding_dim),
             FeedForward(self._embedding_dim, 1, self._embedding_dim, torch.nn.ReLU(), self._dropout), 
             nn.Linear(self._embedding_dim, self._num_class[0], bias=False),
-            nn.Softmax(dim=1)
         )
         self._root_pooler = BertPooler(PTM, requires_grad=True, dropout=dropout)
         # self._root_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True)
@@ -212,8 +211,8 @@ class ModelTree(Model):
             l = metadata[0]["level"]
             self._level_classifiers[l].update_upper_level_embeddings(root_emb)
             return output_dict
-        level_prob = list()
-        level_prob.append(self._root_classifier(root_emb))
+        level_logits = list()
+        level_logits.append(self._root_classifier(root_emb))
         # build level label from CWE_ID
         level_label = list()
         for l in range(self._level_num):
@@ -232,20 +231,20 @@ class ModelTree(Model):
                 upper_level_info = level_label[l]
             else:
                 # use upper level predict result
-                upper_level_info = torch.argmax(level_prob[l], dim=1)
+                upper_level_info = torch.argmax(level_logits[l], dim=1)
             upper_level_info = F.one_hot(upper_level_info, num_classes=self._num_class[l]).to(torch.float)
-            level_prob.append(self._level_classifiers[l](level_emb, upper_level_info))
+            level_logits.append(self._level_classifiers[l](level_emb, upper_level_info))
 
             for metric_name, metric in self._level_f1[l+1].items():
-                metric(predictions=level_prob[l+1], gold_labels=level_label[l+1], mask=(upper_level_info[:, 0] == 0))
-        output_dict["probs"] = level_prob
+                metric(predictions=level_logits[l+1], gold_labels=level_label[l+1], mask=(upper_level_info[:, 0] == 0))
+        output_dict["logits"] = level_logits
         if process not in ["test", "predict"]:
-            loss = self._loss(level_prob, level_label)
+            loss = self._loss(level_logits, level_label)
             output_dict["label"] = level_label
             output_dict['loss'] = loss
         # compute metric
-        self._root_metric(predictions=level_prob[0], gold_labels=level_label[0])
-        self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
+        self._root_metric(predictions=level_logits[0], gold_labels=level_label[0])
+        self._path_fraction_metric(predictions=level_logits, gold_labels=level_label)
 
         return output_dict
     
@@ -255,8 +254,8 @@ class ModelTree(Model):
         if output_dict["process"] not in ["test", "predict"]:
             return output_dict
         out2file = list()
-        # pred = np.argmax(output_dict["probs"][l], axis=1)
-        for i in len(output_dict["probs"][0].shape[0]):
+        # pred = np.argmax(output_dict["logits"][l], axis=1)
+        for i in len(output_dict["logits"][0].shape[0]):
             # sample i
             obj = dict()
             cwe_id = output_dict["meta"]["CWE_ID"]
@@ -266,15 +265,15 @@ class ModelTree(Model):
             # record the level prob for further analyse
             for l in range(self._level_num):
                 if l == 0:
-                    p[l] = output_dict["probs"][l][i]
+                    p[l] = output_dict["logits"][l][i]
                 else:
                     p[l] = [
-                        p[l-1][self._node_father[k]] * output_dict["probs"][l][i][k]
+                        p[l-1][self._node_father[k]] + output_dict["logits"][l][i][k]
                         for k in range(self._num_class[l])
                     ]
                 
                 obj[f"l{l}"] = {
-                    self._level_node[k]: output_dict["probs"][l][i][k]
+                    self._level_node[k]: output_dict["logits"][l][i][k]
                     for k in range(self._num_class[l])
                 }
             l = self._level_num - 1

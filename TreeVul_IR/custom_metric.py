@@ -69,7 +69,9 @@ class RootF1Metric(Metric):
         self._thres = 0.5
     
     def __call__(self, predictions: torch.Tensor, gold_labels: torch.Tensor, mask: Optional[torch.BoolTensor]=None):
-        self.root_pred = predictions[:, 1] if self.root_pred is None else torch.cat((self.root_pred, predictions[:, 1]))
+        # predictions is logits, should go through softmax
+        prob = torch.nn.functional.softmax(predictions, dim=1)
+        self.root_pred = prob[:, 1] if self.root_pred is None else torch.cat((self.root_pred, prob[:, 1]))
         self.root_label = gold_labels if self.root_label is None else torch.cat((self.root_label, gold_labels))
     
     def get_metric(self, reset: bool):

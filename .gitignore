@@ -1,4 +1,6 @@
 /data/*
+/data1/*
+/model/*
 /out_*
 /corrected_data/merged*
 /.vscode
