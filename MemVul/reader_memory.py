@@ -200,7 +200,6 @@ class ReaderMemory(DatasetReader):
 
             logger.info(f"Dataset Count: Same : {same_num} / Diff : {diff_num}")
 
-    @overrides
     def text_to_instance(self, p, type_="train") -> Instance:
         fields: Dict[str, Field] = dict()
         ins1, ins2 = p

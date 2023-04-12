@@ -70,7 +70,6 @@ class ReaderSingle(DatasetReader):
 
         return dataset
 
-    @overrides
     def _read(self, file_path):
         dataset = self.read_dataset(file_path)
         
@@ -112,7 +111,6 @@ class ReaderSingle(DatasetReader):
                         num_train += 1
             logger.info(f"Num of training instances is {num_train}")
 
-    @overrides
     def text_to_instance(self, ins, type_="train") -> Instance:  # type: ignore
         # share the code between predictor and trainer, hence the label field is optional
         fields: Dict[str, Field] = {}

@@ -146,7 +146,6 @@ class PretrainedTransformerEmbedder(TokenEmbedder):
         if eval_mode:
             self.transformer_model.eval()
 
-    @overrides
     def train(self, mode: bool = True):
         self.training = mode
         for name, module in self.named_children():
@@ -156,8 +155,7 @@ class PretrainedTransformerEmbedder(TokenEmbedder):
                 module.train(mode)
         return self
 
-    @overrides
-    def get_output_dim(self):
+    def get_output_dim(self) -> int:
         return self.output_dim
 
     def _number_of_token_type_embeddings(self):
@@ -168,7 +166,6 @@ class PretrainedTransformerEmbedder(TokenEmbedder):
         else:
             return 0
 
-    @overrides
     def forward(
         self,
         token_ids: torch.LongTensor,

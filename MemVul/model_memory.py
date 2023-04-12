@@ -76,9 +76,9 @@ class ModelMemory(Model):
         # self._golden_instances_ids = None  # dialogue id
 
         self._metrics = {
-            "accuracy": CategoricalAccuracy(),
+            # "accuracy": CategoricalAccuracy(),
             "f1-score_overall": FBetaMeasure(beta=1.0, average="weighted", labels=range(self._num_class)),  # return float
-            "f1-score_each": FBetaMeasure(beta=1.0, average=None, labels=range(self._num_class))  # return list[float]
+            # "f1-score_each": FBetaMeasure(beta=1.0, average=None, labels=range(self._num_class))  # return list[float]
         }
         self._siamese_metric = SiameseMeasureV1(self._same_idx)
 
@@ -192,16 +192,16 @@ class ModelMemory(Model):
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         metrics = dict()
-        metrics['accuracy'] = self._metrics['accuracy'].get_metric(reset)
+        # metrics['accuracy'] = self._metrics['accuracy'].get_metric(reset)
         precision, recall, fscore = self._metrics['f1-score_overall'].get_metric(reset).values()
         metrics['precision'] = precision
         metrics['recall'] = recall
         metrics['f1-score'] = fscore
-        precision, recall, fscore = self._metrics['f1-score_each'].get_metric(reset).values()
-        for i in range(self._num_class):
-            metrics[f'{self._idx2token_label[i]}_precision'] = precision[i]
-            metrics[f'{self._idx2token_label[i]}_recall'] = recall[i]
-            metrics[f'{self._idx2token_label[i]}_f1-score'] = fscore[i]
+        # precision, recall, fscore = self._metrics['f1-score_each'].get_metric(reset).values()
+        # for i in range(self._num_class):
+        #     metrics[f'{self._idx2token_label[i]}_precision'] = precision[i]
+        #     metrics[f'{self._idx2token_label[i]}_recall'] = recall[i]
+        #     metrics[f'{self._idx2token_label[i]}_f1-score'] = fscore[i]
         
         if reset:
             # only calculate this metric when the entire evaluation is done
