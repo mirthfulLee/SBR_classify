@@ -53,12 +53,10 @@ class ModelCNN(Model):
                  text_field_embedder: TextFieldEmbedder,
                  dropout: float = 0.1,
                  label_namespace: str = "class_labels",
-                 device: str = "cpu",
                  initializer: InitializerApplicator = InitializerApplicator(),
                  regularizer: RegularizerApplicator = None) -> None:
         super().__init__(vocab)
 
-        self._device = torch.device(device)
         self._label_namespace = label_namespace
         self._dropout = Dropout(dropout)
         
@@ -123,8 +121,7 @@ class ModelCNN(Model):
         idx = np.argmax(output_dict["probs"], axis=1)
         out2file = list()
         for i, _ in enumerate(idx):
-            out2file.append({"Issue_Url": output_dict["meta"][i]["instance"]["Issue_Url"],
-                             "label": output_dict["meta"][i]["instance"]["label"],
+            out2file.append({"label": output_dict["meta"][i]["instance"]["label"],
                              "predict": self._idx2token_label[_],
                              "prob": output_dict["probs"][i][self._idx_pos]})
                              
