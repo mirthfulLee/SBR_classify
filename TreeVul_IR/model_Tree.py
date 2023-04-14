@@ -43,7 +43,7 @@ class LevelClassifier(nn.Module):
     build a classifier response for a specific level:
     the level contains node_num kid-node and its upper level has upper_node_num node.
     '''
-    def __init__(self, upper_node_num:int, node_num:int, embedding_dim:int=512, dropout:float=0.1):
+    def __init__(self, upper_node_num:int, node_num:int, embedding_dim:int=512, dropout:float=0.1, upper_level_result_awareness:bool=True):
         super().__init__()
         self._upper_node_num = upper_node_num
         self._node_num = node_num
@@ -51,6 +51,7 @@ class LevelClassifier(nn.Module):
             FeedForward(embedding_dim, 1, embedding_dim, torch.nn.ReLU(), dropout), 
             nn.Linear(embedding_dim, self._node_num, bias=False),  
         )
+        self._upper_level_result_awareness = upper_level_result_awareness
         self._batch_norm = nn.BatchNorm1d(embedding_dim)
         # the embedding vector of upper-node
         self._upper_level_embeddings = nn.Parameter(torch.zeros(upper_node_num, embedding_dim),
@@ -70,8 +71,9 @@ class LevelClassifier(nn.Module):
         # add batch norm to x
         x = self._batch_norm(x)
         # x = x + torch.matmul(upper_level_info, self._upper_level_embeddings) # (batch, upper_node_num) * (upper_node_num, embedding_dim)
-        x = self._gated_merge(input_a = x, 
-                              input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
+        if self._upper_level_result_awareness:
+            x = self._gated_merge(input_a = x, 
+                                input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
         x = self._classifier(x)
         return x
 
@@ -101,8 +103,10 @@ class ModelTree(Model):
                  level_num: int = 3, # the first level is SBR and neg
                  cwe_info_file: str = "CWE_info.json",
                  loss_weight: List = None,
-                 update_step: int = 16,
+                 update_step: int = 64,
                  root_thres: float = 0.5,
+                 level_lstm: bool = True, 
+                 upper_level_result_awareness: bool = True,
                 #  pooling_method: str = "bilstm+avg", # bilstm+avg or CLS
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
@@ -132,21 +136,22 @@ class ModelTree(Model):
             nn.Linear(self._embedding_dim, self._num_class[0], bias=False),
         )
         self._root_pooler = BertPooler(PTM, requires_grad=True, dropout=dropout)
-        # self._root_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True)
         self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True) # averaged vec may be too small
-        # self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim)
-        self._seq2seq_encoder = nn.ModuleList([
-            LstmSeq2SeqEncoder(
-                input_size = self._embedding_dim, 
-                hidden_size = self._embedding_dim // 2, 
-                bias = True,
-                num_layers = 1,
-                dropout = dropout,
-                bidirectional = True)
-            for _ in range(1, level_num)
-        ])
+        self._level_lstm = level_lstm
+        if self._level_lstm:
+            self._seq2seq_encoder = nn.ModuleList([
+                LstmSeq2SeqEncoder(
+                    input_size = self._embedding_dim, 
+                    hidden_size = self._embedding_dim // 2, 
+                    bias = True,
+                    num_layers = 1,
+                    dropout = dropout,
+                    bidirectional = True)
+                for _ in range(1, level_num)
+            ])
         self._level_classifiers = nn.ModuleList([
-            LevelClassifier(self._num_class[l-1], self._num_class[l], self._embedding_dim, self._dropout)
+            LevelClassifier(self._num_class[l-1], self._num_class[l], 
+                            self._embedding_dim, self._dropout, upper_level_result_awareness=upper_level_result_awareness)
             for l in range(1, level_num)
         ])
         self._root_metric = RootF1Metric(thres=root_thres)
@@ -224,7 +229,8 @@ class ModelTree(Model):
 
         # classify process for level > 0 (use upper level info as previous knowledge)
         for l in range(self._level_num - 1):
-            embedding = self._seq2seq_encoder[l](embedding, sample_mask)
+            if self._level_lstm:
+                embedding = self._seq2seq_encoder[l](embedding, sample_mask)
             level_emb = self._level_pooler(embedding, sample_mask)
             # Curriculum Learning: use teacher forcing (with ratio)
             if process == "train" and random.choices([True, False], weights=[self._teacher_forcing_ratio, 1 - self._teacher_forcing_ratio], k=1)[0]:
