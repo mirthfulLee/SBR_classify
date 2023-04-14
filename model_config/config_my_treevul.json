@@ -36,6 +36,7 @@ local seed = 2023;
             0.25,
             0.25
         ],
+        // TODO: change thres for test
         "root_thres": 0.5,
         "update_step": 64,
         "text_field_embedder": {

@@ -165,7 +165,7 @@ def cal_metrics(file, thres=0.5):
     # file: {model}_result
     # thres is from validation (find on the validation set)
     merged_results = list()
-    f = open(f"{DATA_PATH}/test_results/{file}.json", "r")
+    f = open(file, "r")
     for line in f.readlines():
         # result of multiple batches are segmented by \n
         merged_results.extend(json.loads(line))
@@ -198,25 +198,19 @@ def cal_metrics(file, thres=0.5):
     fn.append("metric_all")
     fn = "_".join(list(fn))
     metrics["thres"] = thres
-    with open(f"{DATA_PATH}/test_results/{fn}.json", "w") as f:
+    output_metric_cal = f"{archive_path}/test_metric-thres.json"
+    with open(output_metric_cal, "w") as f:
         json.dump(metrics, f, indent=4)
 
 
 def predict_test_set():
     config = json.load(open("test_config_memory.json", "r"))  # test config
     weights = None  # the default is the best one
-    batch_size = 512
-    # TODO: change the cuda device
-    cuda = 1
-    # config["model"]["device"] = f"cuda:{cuda}"
-    seed = 2023
-    output_metric = f"{DATA_PATH}/test_results/{model}_metric.json"
-    output_results = f"{DATA_PATH}/test_results/{model}_result.json"
     test_siamese(
         # FIXME: change archive_file
-        archive_file=f"{DATA_PATH}/{model}/my_memvul/model.tar.gz",
+        archive_file=f"{archive_path}/model.tar.gz",
         input_file=test_set,
-        input_golden_file=f"{DATA_PATH}/data/{golden_set}.json",
+        input_golden_file=golden_set,
         test_config=config,
         weights_file=weights,
         output_file=output_metric,
@@ -226,14 +220,21 @@ def predict_test_set():
         seed=seed,
     )
 
-DATA_PATH = "/data1/huanli/pythonProjects/SBR_identify"
+DATA_PATH = "./"
 
 if __name__ == "__main__":
     # test_set = os.path.join(DATA_PATH, "corrected_data", "merged_processed.json")
-    test_set = os.path.join(DATA_PATH, "data", "test_samples_compressed.csv")
-    golden_set = "CWE_anchor_golden_project"  # path of anchors in the external memory
     model = "MemVul"
-
+    batch_size = 512
+    # TODO: change the cuda device
+    cuda = 1
+    # config["model"]["device"] = f"cuda:{cuda}"
+    seed = 2023
+    test_set = os.path.join(DATA_PATH, "data1", "test_samples_compressed.csv")
+    golden_set = os.path.join(DATA_PATH, "data1", "CWE_anchor_golden_project.json") # path of anchors in the external memory
+    archive_path = os.path.join(DATA_PATH, "model", "my_memvul")
+    output_metric = f"{archive_path}/test_metric.json"
+    output_results = f"{archive_path}/{model}_result.json"
     predict_test_set()
-    cal_metrics(f"{model}_result", thres=0.69)
+    cal_metrics(output_results, thres=0.64)
 

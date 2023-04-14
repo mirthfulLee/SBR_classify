@@ -16,7 +16,7 @@ from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper, LstmSeq2Seq
 from allennlp.modules.seq2vec_encoders import CnnEncoder, BagOfEmbeddingsEncoder, BertPooler
 from allennlp.nn import RegularizerApplicator, InitializerApplicator, Activation, util
 from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, weighted_sum
-from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric
+from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric, Auc
 from allennlp.training.util import get_batch_size
 from allennlp.data.tokenizers.pretrained_transformer_tokenizer import PretrainedTransformerTokenizer
 from allennlp.data.token_indexers.pretrained_transformer_indexer import PretrainedTransformerIndexer
@@ -150,6 +150,7 @@ class ModelTree(Model):
             for l in range(1, level_num)
         ])
         self._root_metric = RootF1Metric(thres=root_thres)
+        self._auc_metric = Auc()
         # init metrics for each level
         self._level_f1 = dict()
         for l in range(1, self._level_num):
@@ -236,14 +237,16 @@ class ModelTree(Model):
             level_logits.append(self._level_classifiers[l](level_emb, upper_level_info))
 
             for metric_name, metric in self._level_f1[l+1].items():
-                metric(predictions=level_logits[l+1], gold_labels=level_label[l+1], mask=(upper_level_info[:, 0] == 0))
+                metric(predictions=level_logits[l+1], gold_labels=level_label[l+1], mask=(level_label[l] != 0))
         output_dict["logits"] = level_logits
         if process not in ["test", "predict"]:
             loss = self._loss(level_logits, level_label)
             output_dict["label"] = level_label
             output_dict['loss'] = loss
         # compute metric
-        self._root_metric(predictions=level_logits[0], gold_labels=level_label[0])
+        probs = F.softmax(level_logits[0], dim=1)[:, 1]
+        self._root_metric(predictions=probs, gold_labels=level_label[0])
+        self._auc_metric(predictions=probs, gold_labels=level_label[0])
         self._path_fraction_metric(predictions=level_logits, gold_labels=level_label)
 
         return output_dict
@@ -251,7 +254,7 @@ class ModelTree(Model):
     def make_output_human_readable(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         # write the experiments during the test
         # beam search
-        if output_dict["process"] not in ["test", "predict"]:
+        if output_dict["process"] not in ["predict"]:
             return output_dict
         out2file = list()
         # pred = np.argmax(output_dict["logits"][l], axis=1)
@@ -284,6 +287,7 @@ class ModelTree(Model):
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         metrics = self._root_metric.get_metric(reset)
+        metrics["auc"] = self._auc_metric.get_metric(reset)
         metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
         for l in range(1, self._level_num):
             # metrics[f'accuracy_l{l}'] = self._metrics[l]['accuracy'].get_metric(reset)

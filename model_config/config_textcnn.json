@@ -38,17 +38,17 @@ local seed = 2023;
     }
   },
   "data_loader": {
-    "batch_size": 32,
+    "batch_size": 16,
     "shuffle": true
   },
   "validation_data_loader":{
-    "batch_size": 32,
+    "batch_size": 16,
     "shuffle": false
   },
   "trainer": {
     "optimizer": {
       "type": "adam",
-      "lr": 1e-3,
+      "lr": 5e-4,
       "betas": [
         0.9,
         0.999
@@ -57,10 +57,10 @@ local seed = 2023;
     "checkpointer": {
       "keep_most_recent_by_count": 1,
     },
-    "num_gradient_accumulation_steps": 1,
+    "num_gradient_accumulation_steps": 2,
     "validation_metric": "+pos_f1-score",
     "num_epochs": 30,
-    "patience": 10,
+    "patience": 5,
     "cuda_device": 3
   }
 }
