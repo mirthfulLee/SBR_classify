@@ -1,5 +1,5 @@
 local bert_model = "bert-base-uncased";
-local cwe_info_file = "data/CWE_info.json";
+local cwe_info_file = "data1/CWE_info.json";
 local seed = 2023;
 
 {
@@ -23,21 +23,21 @@ local seed = 2023;
             }
         }
     },
-    "train_data_path": "data/train_samples_compressed.csv",
-    // "train_data_path": "data/sub_train_samples_compressed.csv",
-    "validation_data_path": "data/validation_samples_compressed.csv",
-    // "validation_data_path": "data/sub_validation_samples_compressed.csv",
+    "train_data_path": "data1/train_samples_compressed.csv",
+    "validation_data_path": "data1/validation_samples_compressed.csv",
     "model": {
         "type": "model_tree",
         "dropout": 0.1,
         "PTM": bert_model,
         "cwe_info_file": cwe_info_file,
         "level_num": 3,
+        "level_lstm": false,
         "loss_weight": [
-            0.5,
+            1,
             0.25,
             0.25
         ],
+        // TODO: change thres for test
         "root_thres": 0.5,
         "update_step": 64,
         "text_field_embedder": {
@@ -52,7 +52,7 @@ local seed = 2023;
         }
     },
     "data_loader": {
-        "batch_size": 16,
+        "batch_size": 32,
         "shuffle": false,
         "drop_last": true,
         // "max_instances_in_memory": 8192
@@ -87,7 +87,7 @@ local seed = 2023;
                     }
                 ]
             ],
-            "lr": 2e-4,
+            "lr": 1e-4,
             "betas": [
                 0.9,
                 0.999
@@ -102,7 +102,6 @@ local seed = 2023;
                 "change_neg_ratio_after": {
                     "5": 0.02,
                     "10": 0.04,
-                    "20": 0.08
                 }
             },
             {
@@ -114,9 +113,9 @@ local seed = 2023;
                         0.3
                     ],
                     "10": [
-                        0.33,
-                        0.33,
-                        0.33
+                        0.333,
+                        0.333,
+                        0.333
                     ]
                 }
             },

@@ -8,7 +8,8 @@ local seed = 2023;
     "pytorch_seed": seed,
     "dataset_reader": {
         "type": "reader_tree",
-        "sample_neg": 0.01,
+        "sample_neg": 0.0,
+        "skip_neg": true,
         "tokenizer": {
             "type": "pretrained_transformer",
             "model_name": bert_model,
@@ -33,13 +34,12 @@ local seed = 2023;
         "PTM": bert_model,
         "cwe_info_file": cwe_info_file,
         "level_num": 3,
-        "loss_weight": [
-            0.5,
-            0.25,
-            0.25
+        "update_step": 8,
+        "weight": [
+            0.2,
+            0.4,
+            0.4
         ],
-        "root_thres": 0.5,
-        "update_step": 64,
         "text_field_embedder": {
             "token_embedders": {
                 "tokens": {
@@ -54,7 +54,6 @@ local seed = 2023;
     "data_loader": {
         "batch_size": 16,
         "shuffle": false,
-        "drop_last": true,
         // "max_instances_in_memory": 8192
     },
     "validation_data_loader": {
@@ -73,7 +72,7 @@ local seed = 2023;
                         "_text_field_embedder"
                     ],
                     {
-                        "lr": 2e-5,
+                        "lr": 1e-5,
                         "requires_grad": true
                     }
                 ],
@@ -87,7 +86,7 @@ local seed = 2023;
                     }
                 ]
             ],
-            "lr": 2e-4,
+            "lr": 1e-4,
             "betas": [
                 0.9,
                 0.999
@@ -98,47 +97,18 @@ local seed = 2023;
         },
         "callbacks": [
             {
-                "type": "reload_training_data",
-                "change_neg_ratio_after": {
-                    "5": 0.02,
-                    "10": 0.04,
-                    "20": 0.08
-                }
-            },
-            {
-                "type": "dynamic_loss_weight",
-                "epoch_weight_map": {
-                    "5": [
-                        0.4,
-                        0.3,
-                        0.3
-                    ],
-                    "10": [
-                        0.33,
-                        0.33,
-                        0.33
-                    ]
-                }
-            },
-            {
-                "type": "change_teacher_forcing_ratio",
-                "decay_strategy": "inverse_sigmoid",
-                "k": 13,
-                "start_learning_ratio": 1.0,
-                "start_learning_epochs": 5,
-                "end_learning_ratio": 0,
-                "end_learning_epochs": 40,
+                "type": "embedding_update_callback",
             }
         ],
         "learning_rate_scheduler": {
             "type": "linear_with_warmup",
-            "warmup_steps": 5000
+            "warmup_steps": 3000
         },
         // "num_gradient_accumulation_steps": 2,
-        "validation_metric": "+f1", // maximize f1 score of root or use default "-loss"
+        "validation_metric": "+weighted_f1-score_l2", // maximize f1 score of root or use default "-loss"
         "num_epochs": 50,
         "patience": 10,
         // TODO: this is the real place to change target gpu
-        "cuda_device": 3
+        "cuda_device": 2
     },
 }

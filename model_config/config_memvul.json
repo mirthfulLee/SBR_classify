@@ -1,0 +1,132 @@
+local bert_model = "bert-base-uncased";
+local anchor_path = "data1/CWE_anchor_golden_project.json";
+local cve_path = "data1/CVE_text.csv";
+local seed = 2023;
+
+{
+  "random_seed": seed,
+  "numpy_seed": seed,
+  "pytorch_seed": seed,
+  "dataset_reader": {
+    "type": "reader_memory",
+    "sample_neg": 0.01,
+    // "train_iter": 1,
+    "same_diff_ratio": {
+      "diff": 6,
+      "same": 6
+    },
+    "anchor_path": anchor_path,
+    "cve_path": cve_path,
+    "tokenizer": {
+      "type": "pretrained_transformer",
+      "model_name": bert_model,
+      "add_special_tokens": true,
+      "max_length": 256
+    },
+    "token_indexers": {
+      "tokens": {
+        "type": "pretrained_transformer",
+        "model_name": bert_model,
+        "namespace": "tags"
+      }
+    }
+  },
+  "train_data_path": "data1/train_samples_compressed.csv",
+  "validation_data_path": "data1/validation_samples_compressed.csv",
+  "model": {
+    "type": "model_memory",
+    "label_namespace": "labels",
+    "dropout": 0.1,
+    "use_header": true,
+    "PTM": bert_model,
+    "temperature": 0.1,
+    "text_field_embedder": {
+      "token_embedders": {
+        "tokens": {
+          "type": "custom_pretrained_transformer",
+          "model_name": bert_model,
+          "train_parameters": true,
+          "pretrained_model_path": "further_pretrain/out_wwm/"
+        }
+      }
+    }
+  },
+  "data_loader": {
+    "batch_size": 12,
+    "shuffle": false
+  },
+  "validation_data_loader": {
+    "batch_size": 400,
+    "shuffle": false
+  },
+  "trainer": {
+    "type": "custom_gradient_descent",
+    "optimizer": {
+      "type": "huggingface_adamw",
+      "parameter_groups": [
+        [
+          [
+            "_text_field_embedder"
+          ],
+          {
+            "lr": 2e-5,
+            "requires_grad": true
+          }
+        ],
+        [
+          [
+            "_bert_pooler"
+          ],
+          {
+            "lr": 5e-5,
+            "requires_grad": true
+          }
+        ]
+      ],
+      "lr": 1e-4,
+      "betas": [
+        0.9,
+        0.999
+      ]
+    },
+    "checkpointer": {
+      "keep_most_recent_by_count": 1,
+    },
+    "learning_rate_scheduler": {
+      "type": "linear_with_warmup",
+      "warmup_steps": 10000
+    },
+    "custom_callbacks": [
+      {
+        "type": "reset_dataloader"
+      },
+      {
+        "type": "custom_validation",
+        "anchor_path": anchor_path,
+        "cve_path": cve_path,
+        "data_reader": {
+          "type": "reader_memory",
+          "tokenizer": {
+            "type": "pretrained_transformer",
+            "model_name": bert_model,
+            "add_special_tokens": true,
+            "max_length": 512
+          },
+          "token_indexers": {
+            "tokens": {
+              "type": "pretrained_transformer",
+              "model_name": bert_model,
+              "namespace": "tags"
+            }
+          }
+        }
+      }
+    ],
+    // "num_gradient_accumulation_steps": 2,
+    "validation_metric": "+s_f1-score",
+    "num_epochs": 30,
+    "patience": 7,
+    // TODO: this is the real place to change target gpu
+    "cuda_device": 2
+  },
+}

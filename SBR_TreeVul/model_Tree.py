@@ -16,13 +16,11 @@ from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper, LstmSeq2Seq
 from allennlp.modules.seq2vec_encoders import CnnEncoder, BagOfEmbeddingsEncoder, BertPooler
 from allennlp.nn import RegularizerApplicator, InitializerApplicator, Activation, util
 from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, weighted_sum
-from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric, Auc
+from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric
 from allennlp.training.util import get_batch_size
 from allennlp.data.tokenizers.pretrained_transformer_tokenizer import PretrainedTransformerTokenizer
 from allennlp.data.token_indexers.pretrained_transformer_indexer import PretrainedTransformerIndexer
 from allennlp.modules.gated_sum import GatedSum
-import random
-from TreeVul_IR.custom_metric import PathFractionMetric, RootF1Metric
 
 from torch import nn
 import torch.nn.functional as F
@@ -43,7 +41,7 @@ class LevelClassifier(nn.Module):
     build a classifier response for a specific level:
     the level contains node_num kid-node and its upper level has upper_node_num node.
     '''
-    def __init__(self, upper_node_num:int, node_num:int, embedding_dim:int=512, dropout:float=0.1, upper_level_result_awareness:bool=True):
+    def __init__(self, upper_node_num:int, node_num:int, embedding_dim:int=512, dropout:float=0.1):
         super().__init__()
         self._upper_node_num = upper_node_num
         self._node_num = node_num
@@ -51,7 +49,6 @@ class LevelClassifier(nn.Module):
             FeedForward(embedding_dim, 1, embedding_dim, torch.nn.ReLU(), dropout), 
             nn.Linear(embedding_dim, self._node_num, bias=False),  
         )
-        self._upper_level_result_awareness = upper_level_result_awareness
         self._batch_norm = nn.BatchNorm1d(embedding_dim)
         # the embedding vector of upper-node
         self._upper_level_embeddings = nn.Parameter(torch.zeros(upper_node_num, embedding_dim),
@@ -68,14 +65,13 @@ class LevelClassifier(nn.Module):
         x(batch, embedding_dim): the feature of CLS token or AVG used for classifier
         upper_level_info(batch, upper_node_num): the upper level class of each sample in one-hot format
         '''
-        # add batch norm to x
+        # TODO: add batch norm to x
         x = self._batch_norm(x)
         # x = x + torch.matmul(upper_level_info, self._upper_level_embeddings) # (batch, upper_node_num) * (upper_node_num, embedding_dim)
-        if self._upper_level_result_awareness:
-            x = self._gated_merge(input_a = x, 
-                                input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
+        x = self._gated_merge(input_a = x, 
+                              input_b = torch.matmul(upper_level_info, self._upper_level_embeddings))
         x = self._classifier(x)
-        return x
+        return F.softmax(x, dim=-1)
 
 
 class CustomCrossEntropyLoss(nn.Module):
@@ -87,11 +83,38 @@ class CustomCrossEntropyLoss(nn.Module):
         self.level_num = level_num
         self.weight = weight or [1/level_num for _ in range(level_num)]
 
-    def forward(self, level_logits, level_label):
+    def forward(self, level_prob, level_label):
         loss_sum = 0
         for l in range(self.level_num):
-            loss_sum += self.weight[l] * F.cross_entropy(level_logits[l], level_label[l])
+            loss_sum += self.weight[l] * F.cross_entropy(level_prob[l], level_label[l])
         return loss_sum
+
+class PathFractionMetric(Metric):
+    '''
+    path accuracy regardless of "neg" labels and root classify task.
+    '''
+    def __init__(self, level_num) -> None:
+        super().__init__()
+        self._level_num = level_num
+        self.total_num: int = 0
+        self.matched_num: int = 0
+    
+    def __call__(self, predictions, gold_labels, mask: Optional[torch.BoolTensor]=None):
+        for l in range(1, self._level_num):
+            pred = torch.argmax(predictions[l], dim=1)
+            self.matched_num += torch.sum((pred == gold_labels[l]) * (gold_labels[l] != 0)).item()
+            # self.total_num += predictions[l].shape[0]
+            self.total_num += torch.sum(gold_labels[l] != 0).item()
+    
+    def reset(self):
+        self.matched_num = 0
+        self.total_num = 0
+    
+    def get_metric(self, reset: bool):
+        result = self.matched_num / max(self.total_num, 1)
+        if reset:
+            self.reset()
+        return result
 
 @Model.register("model_tree")
 class ModelTree(Model):
@@ -102,11 +125,8 @@ class ModelTree(Model):
                  dropout: float = 0.1,
                  level_num: int = 3, # the first level is SBR and neg
                  cwe_info_file: str = "CWE_info.json",
-                 loss_weight: List = None,
-                 update_step: int = 64,
-                 root_thres: float = 0.5,
-                 level_lstm: bool = True, 
-                 upper_level_result_awareness: bool = True,
+                 weight: list = None,
+                 update_step: int = 16,
                 #  pooling_method: str = "bilstm+avg", # bilstm+avg or CLS
                  initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
@@ -131,45 +151,42 @@ class ModelTree(Model):
         
         self._embedding_dim = self._text_field_embedder.get_output_dim()
         self._root_classifier = nn.Sequential(
-            # nn.BatchNorm1d(embedding_dim),
             FeedForward(self._embedding_dim, 1, self._embedding_dim, torch.nn.ReLU(), self._dropout), 
             nn.Linear(self._embedding_dim, self._num_class[0], bias=False),
+            nn.Softmax(dim=1)
         )
         self._root_pooler = BertPooler(PTM, requires_grad=True, dropout=dropout)
+        # self._root_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True)
         self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim, averaged=True) # averaged vec may be too small
-        self._level_lstm = level_lstm
-        if self._level_lstm:
-            self._seq2seq_encoder = nn.ModuleList([
-                LstmSeq2SeqEncoder(
-                    input_size = self._embedding_dim, 
-                    hidden_size = self._embedding_dim // 2, 
-                    bias = True,
-                    num_layers = 1,
-                    dropout = dropout,
-                    bidirectional = True)
-                for _ in range(1, level_num)
-            ])
+        # self._level_pooler = BagOfEmbeddingsEncoder(embedding_dim=self._embedding_dim)
+        self._seq2seq_encoder = nn.ModuleList([
+            LstmSeq2SeqEncoder(
+                input_size = self._embedding_dim, 
+                hidden_size = self._embedding_dim // 2, 
+                bias = True,
+                num_layers = 1,
+                dropout = dropout,
+                bidirectional = True)
+            for _ in range(1, level_num)
+        ])
         self._level_classifiers = nn.ModuleList([
-            LevelClassifier(self._num_class[l-1], self._num_class[l], 
-                            self._embedding_dim, self._dropout, upper_level_result_awareness=upper_level_result_awareness)
+            LevelClassifier(self._num_class[l-1], self._num_class[l], self._embedding_dim, self._dropout)
             for l in range(1, level_num)
         ])
-        self._root_metric = RootF1Metric(thres=root_thres)
-        self._auc_metric = Auc()
+        self._root_acc = CategoricalAccuracy()
         # init metrics for each level
-        self._level_f1 = dict()
-        for l in range(1, self._level_num):
-            self._level_f1[l] = {
+        self._level_f1 = list()
+        for l in range(self._level_num):
+            self._level_f1.append({
                 "macro": FBetaMeasure(beta=1.0, average="macro", labels=range(1, self._num_class[l])),
                 "weighted": FBetaMeasure(beta=1.0, average="weighted", labels=range(1, self._num_class[l])),
-            }
+            })
         # init path fraction metric
         self._path_fraction_metric = PathFractionMetric(level_num=level_num)
-        self._loss = CustomCrossEntropyLoss(level_num, weight=loss_weight)
+        self._loss = CustomCrossEntropyLoss(level_num, weight=weight)
         self._update_step = update_step
         # update embeddings when cnt == 0
         self._update_cnt = 0
-        self._teacher_forcing_ratio = 1.0
         initializer(self)
 
     def update_embeddings(self):
@@ -199,13 +216,12 @@ class ModelTree(Model):
         2. sample (batch, seq_len, embedding_dim): TextField - token from IR title & content
         3. metadata()
         '''
-        if self._update_cnt == 0 or (process not in ["train", "update"] and self._update_cnt != self._update_step): 
+        if self._update_cnt == 0 or (process != "train" and self._update_cnt != self._update_step): 
             self.update_embeddings()
         elif process == "train": 
             self._update_cnt -= 1
         output_dict = dict()
         output_dict["process"] = process
-        if process == "validation": self._root_metric.validation = True
         if metadata:
             output_dict["meta"] = metadata
         sample_mask = get_text_field_mask(sample)
@@ -217,8 +233,8 @@ class ModelTree(Model):
             l = metadata[0]["level"]
             self._level_classifiers[l].update_upper_level_embeddings(root_emb)
             return output_dict
-        level_logits = list()
-        level_logits.append(self._root_classifier(root_emb))
+        level_prob = list()
+        level_prob.append(self._root_classifier(root_emb))
         # build level label from CWE_ID
         level_label = list()
         for l in range(self._level_num):
@@ -227,44 +243,39 @@ class ModelTree(Model):
                 labels.append(self.get_path_idx(ins["CWE_ID"])[l])
             level_label.append(torch.tensor(labels, dtype=torch.int64, device=self._get_prediction_device()))
 
-        # classify process for level > 0 (use upper level info as previous knowledge)
+        # add unlabel process
         for l in range(self._level_num - 1):
-            if self._level_lstm:
-                embedding = self._seq2seq_encoder[l](embedding, sample_mask)
+            embedding = self._seq2seq_encoder[l](embedding, sample_mask)
             level_emb = self._level_pooler(embedding, sample_mask)
-            # Curriculum Learning: use teacher forcing (with ratio)
-            if process == "train" and random.choices([True, False], weights=[self._teacher_forcing_ratio, 1 - self._teacher_forcing_ratio], k=1)[0]:
-                # use ground truth
+            if process == "train":
                 upper_level_info = level_label[l]
             else:
-                # use upper level predict result
-                upper_level_info = torch.argmax(level_logits[l], dim=1)
+                # process for "unlabel"
+                upper_level_info = torch.argmax(level_prob[l], dim=1)
             upper_level_info = F.one_hot(upper_level_info, num_classes=self._num_class[l]).to(torch.float)
-            level_logits.append(self._level_classifiers[l](level_emb, upper_level_info))
-
-            for metric_name, metric in self._level_f1[l+1].items():
-                metric(predictions=level_logits[l+1], gold_labels=level_label[l+1], mask=(level_label[l] != 0))
-        output_dict["logits"] = level_logits
+            level_prob.append(self._level_classifiers[l](level_emb, upper_level_info))
+        output_dict["probs"] = level_prob
         if process not in ["test", "predict"]:
-            loss = self._loss(level_logits, level_label)
+            loss = self._loss(level_prob, level_label)
             output_dict["label"] = level_label
             output_dict['loss'] = loss
         # compute metric
-        probs = F.softmax(level_logits[0], dim=1)[:, 1]
-        self._root_metric(predictions=probs, gold_labels=level_label[0])
-        self._auc_metric(predictions=probs, gold_labels=level_label[0])
-        self._path_fraction_metric(predictions=level_logits, gold_labels=level_label)
+        self._root_acc(predictions=level_prob[0], gold_labels=level_label[0])
+        for l in range(self._level_num):
+            for metric_name, metric in self._level_f1[l].items():
+                metric(predictions=level_prob[l], gold_labels=level_label[l])
+        self._path_fraction_metric(predictions=level_prob, gold_labels=level_label)
 
         return output_dict
     
     def make_output_human_readable(self, output_dict: Dict[str, Any]) -> Dict[str, Any]:
         # write the experiments during the test
         # beam search
-        if output_dict["process"] not in ["predict"]:
+        if output_dict["process"] not in ["test", "predict"]:
             return output_dict
         out2file = list()
-        # pred = np.argmax(output_dict["logits"][l], axis=1)
-        for i in len(output_dict["logits"][0].shape[0]):
+        # pred = np.argmax(output_dict["probs"][l], axis=1)
+        for i in len(output_dict["probs"][0].shape[0]):
             # sample i
             obj = dict()
             cwe_id = output_dict["meta"]["CWE_ID"]
@@ -274,15 +285,15 @@ class ModelTree(Model):
             # record the level prob for further analyse
             for l in range(self._level_num):
                 if l == 0:
-                    p[l] = output_dict["logits"][l][i]
+                    p[l] = output_dict["probs"][l][i]
                 else:
                     p[l] = [
-                        p[l-1][self._node_father[k]] + output_dict["logits"][l][i][k]
+                        p[l-1][self._node_father[k]] * output_dict["probs"][l][i][k]
                         for k in range(self._num_class[l])
                     ]
                 
                 obj[f"l{l}"] = {
-                    self._level_node[k]: output_dict["logits"][l][i][k]
+                    self._level_node[k]: output_dict["probs"][l][i][k]
                     for k in range(self._num_class[l])
                 }
             l = self._level_num - 1
@@ -292,14 +303,14 @@ class ModelTree(Model):
         return out2file
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        metrics = self._root_metric.get_metric(reset)
-        metrics["auc"] = self._auc_metric.get_metric(reset)
-        metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
-        for l in range(1, self._level_num):
+        metrics = dict()
+        metrics["root_acc"] = self._root_acc.get_metric(reset)
+        for l in range(self._level_num):
             # metrics[f'accuracy_l{l}'] = self._metrics[l]['accuracy'].get_metric(reset)
             for name, metric in self._level_f1[l].items():
                 precision, recall, fscore = metric.get_metric(reset).values()
                 metrics[f'{name}_precision_l{l}'] = precision
                 metrics[f'{name}_recall_l{l}'] = recall
                 metrics[f'{name}_f1-score_l{l}'] = fscore
+        metrics["path_fraction"] = self._path_fraction_metric.get_metric(reset)
         return metrics

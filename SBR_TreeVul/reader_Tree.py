@@ -37,7 +37,8 @@ class ReaderTree(DatasetReader):
 
         self._token_indexers = token_indexers  # token indexers for text
         self._tokenizer = tokenizer
-        self._neg_ratio = sample_neg
+        self._choice_neg = [True, False]
+        self._select_neg = [sample_neg, 1 - sample_neg]  # [True, False]
         self._skip_neg = skip_neg
         self._dataset = dict()  # key is the file path
 
@@ -79,10 +80,10 @@ class ReaderTree(DatasetReader):
             logger.info("Begin validation process ------")
             for _, sample in dataset["pos"].iterrows():
                 # positives come first and then the negatives
-                yield self.text_to_instance(sample, process="validation")
+                yield self.text_to_instance(sample, process="unlabel")
             if self._skip_neg: return
             for _, sample in dataset["neg"].iterrows():
-                yield self.text_to_instance(sample, process="validation")
+                yield self.text_to_instance(sample, process="unlabel")
             logger.info(f"Test sample num is {sample_num}")
             
         else:
@@ -99,7 +100,7 @@ class ReaderTree(DatasetReader):
                     yield self.text_to_instance(sample, process="train")
                     sbr_num += 1  # matched pairs
                 # determine whether make neg sample or not p = select_neg (0.1)
-                elif random.choices([True, False], weights=[self._neg_ratio, 1 - self._neg_ratio], k=1)[0]:
+                elif random.choices(self._choice_neg, weights=self._select_neg, k=1)[0]:
                     sample = dataset["neg"].iloc[index - classes_districution["pos"], :]
                     yield self.text_to_instance(sample, process="train")
                     nsbr_num += 1
@@ -135,7 +136,7 @@ class EmbeddingReader(DatasetReader):
         self._token_indexers = token_indexers  # token indexers for text
         self._tokenizer = tokenizer
 
-        # build tree
+        # TODO: build tree
         # 1. cwe_path: dict (cwe_id => path)
         # 2. cwe_description: dict (cwe_id => description)
         # 3. level info

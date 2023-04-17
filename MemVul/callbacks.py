@@ -49,9 +49,11 @@ class CustomValidation(TrainerCallback):
         model._golden_instances_embeddings = None  # reset
         model._golden_instances_labels = None  # reset
         logger.info("updating golden embeddings")
-        model.forward_on_instances(self._anchors[:128])
-        if len(self._anchors) > 128:
-            model.forward_on_instances(self._anchors[128:])
+        step = 32
+        i = 0
+        while len(self._anchors) > i :
+            model.forward_on_instances(self._anchors[i:i+step])
+            i += step
         
         # with torch.no_grad():
         #     trainer._validation_loss(epoch)

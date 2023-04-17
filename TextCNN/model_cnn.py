@@ -16,17 +16,16 @@ from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper, LstmSeq2Seq
 from allennlp.modules.seq2vec_encoders import CnnEncoder, BagOfEmbeddingsEncoder, BertPooler
 from allennlp.nn import RegularizerApplicator, InitializerApplicator, Activation
 from allennlp.nn.util import get_text_field_mask, get_final_encoder_states, weighted_sum
-from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric
+from allennlp.training.metrics import CategoricalAccuracy, FBetaMeasure, F1Measure, Metric, Auc
 from allennlp.training.util import get_batch_size
 
 from torch import nn
 from torch.nn import Dropout, PairwiseDistance, CosineSimilarity
 import torch.nn.functional as F
 from torch.autograd import Variable
+from TextCNN.custom_metric import RootF1Metric
 
 import warnings
-import json
-from copy import deepcopy
 
 warnings.filterwarnings("ignore")
 
@@ -53,12 +52,10 @@ class ModelCNN(Model):
                  text_field_embedder: TextFieldEmbedder,
                  dropout: float = 0.1,
                  label_namespace: str = "class_labels",
-                 device: str = "cpu",
-                 initializer: InitializerApplicator = InitializerApplicator(),
-                 regularizer: RegularizerApplicator = None) -> None:
+                 thres: float = 0.5,
+                 initializer: InitializerApplicator = InitializerApplicator()) -> None:
         super().__init__(vocab)
 
-        self._device = torch.device(device)
         self._label_namespace = label_namespace
         self._dropout = Dropout(dropout)
         
@@ -78,12 +75,8 @@ class ModelCNN(Model):
             FeedForward(text_embedding_dim, 1, [512], torch.nn.ReLU(), dropout),  # text_header
             nn.Linear(512, self._num_class, bias=False),  # classification layer
         )
-
-        self._metrics = {
-            "accuracy": CategoricalAccuracy(),
-            "f1-score_overall": FBetaMeasure(beta=1.0, average="weighted", labels=range(self._num_class)),  # return float
-            "f1-score_each": FBetaMeasure(beta=1.0, average=None, labels=range(self._num_class))  # return list[float]
-        }
+        self._root_metric = RootF1Metric(thres=thres)
+        self._auc_metric = Auc(self._idx_pos)
         
         self._loss = torch.nn.CrossEntropyLoss()
         initializer(self)
@@ -96,6 +89,7 @@ class ModelCNN(Model):
         output_dict = dict()
         if metadata:
             output_dict["meta"] = metadata
+        # if metadata[0]["type"] == "unlabel": self._root_metric.validation = True
 
         # pad sequence length to 5（CNN filter size）
         sample["tokens"]["tokens"] = pad_sequence2len(tensor=sample["tokens"]["tokens"], dim=-1, max_len=5)
@@ -103,18 +97,16 @@ class ModelCNN(Model):
         mask = get_text_field_mask(sample, padding_id=0)
         sample = self._text_field_embedder(sample)
         # print(sample.shape)  # token embedding + pos embedding
-        
         sample = self._text_cnn(sample, mask)
 
-        logits = self._projector(sample)
+        sample = self._projector(sample)
 
-        probs = nn.functional.softmax(logits, dim=-1)
-        output_dict["probs"] = probs.tolist()
-        loss = self._loss(logits, label)
+        probs = F.softmax(sample, dim=-1)[:, self._idx_pos]
+        loss = self._loss(sample, label)
         output_dict['loss'] = loss
-
-        for metric_name, metric in self._metrics.items():
-            metric(predictions=probs, gold_labels=label)
+        output_dict["probs"] = probs.tolist()
+        self._root_metric(predictions=probs, gold_labels=label)
+        self._auc_metric(predictions=probs, gold_labels=label)
 
         return output_dict
     
@@ -123,26 +115,14 @@ class ModelCNN(Model):
         idx = np.argmax(output_dict["probs"], axis=1)
         out2file = list()
         for i, _ in enumerate(idx):
-            out2file.append({"Issue_Url": output_dict["meta"][i]["instance"]["Issue_Url"],
-                             "label": output_dict["meta"][i]["instance"]["label"],
+            out2file.append({"label": output_dict["meta"][i]["instance"]["label"],
                              "predict": self._idx2token_label[_],
                              "prob": output_dict["probs"][i][self._idx_pos]})
                              
         return out2file
 
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        # return dict()
-
-        metrics = dict()
-        metrics['accuracy'] = self._metrics['accuracy'].get_metric(reset)
-        precision, recall, fscore = self._metrics['f1-score_overall'].get_metric(reset).values()
-        metrics['precision'] = precision
-        metrics['recall'] = recall
-        metrics['f1-score'] = fscore
-        precision, recall, fscore = self._metrics['f1-score_each'].get_metric(reset).values()
-        for i in range(self._num_class):
-            metrics[f'{self._idx2token_label[i]}_precision'] = precision[i]
-            metrics[f'{self._idx2token_label[i]}_recall'] = recall[i]
-            metrics[f'{self._idx2token_label[i]}_f1-score'] = fscore[i]
+        metrics = self._root_metric.get_metric(reset)
+        metrics["auc"] = self._auc_metric.get_metric(reset)
 
         return metrics

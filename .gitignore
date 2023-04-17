@@ -1,4 +1,6 @@
 /data/*
+/data1/*
+/model/*
 /out_*
 /corrected_data/merged*
 /.vscode
@@ -9,6 +11,7 @@
 /temp*
 **/out_*
 **/my_*
+**/sbr_*
 **/weighted_*
 /temp
 /test_results/*
