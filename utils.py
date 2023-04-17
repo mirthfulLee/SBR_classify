@@ -207,7 +207,7 @@ def get_pos_sample_from_json():
     samples = json.load(open(DATA_PATH+"train_samples.json"))
     pos = list(filter(lambda x: x["Security_Issue_Full"] == 1, samples))
 
-    CVE = json.load(open(DATA_PATH + "CVE_dict.json", "r"))
+    CVE = json.load(open(DATA_PATH + "CVE_dict_merged.json", "r"))
     for sample in pos:
         cve_id = sample["CVE_ID"]  # CVE_ID of all samples are valid
         sample["CWE_ID"] = CVE[cve_id]["CWE_ID"]
@@ -349,7 +349,7 @@ def build_anchor(level=1, num_cve_per_anchor=5):
         open(DATA_PATH + "CWE_distribution.json", "r")
     )  # only use the train set
     CWE_tree = json.load(open(DATA_PATH + "CWE_tree.json", "r"))  # dict
-    CVE_dict = json.load(open(DATA_PATH + "CVE_dict.json", "r"))  # dict
+    CVE_dict = json.load(open(DATA_PATH + "CVE_dict_merged.json", "r"))  # dict
 
     CWE_anchor = dict()
     for id_, cwe in CWE_distribution_train.items():
@@ -671,12 +671,12 @@ def IR_with_attack_steps():
 DATA_PATH = "data/"
 
 if __name__ == "__main__":
-    # preprocess_dataset_csv("all_samples")
+    preprocess_dataset_csv("all_samples")
     # divide_dataset_project_csv("all_samples_processed")
     # csv_to_json("train_project")
     # get_pos_sample()
-    # get_pos_sample_from_json()
-    # pos_distribution()
+    get_pos_sample_from_json()
+    pos_distribution()
     build_anchor()
     # preliminary_study_keyword_match()
     # delta_days_IR_CVE()
